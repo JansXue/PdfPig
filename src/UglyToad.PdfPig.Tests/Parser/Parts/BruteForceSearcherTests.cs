@@ -2,6 +2,8 @@
 namespace UglyToad.PdfPig.Tests.Parser.Parts
 {
     using System;
+    using System.IO;
+    using Integration;
     using PdfPig.Core;
     using PdfPig.Parser.Parts;
     using Xunit;
@@ -34,10 +36,18 @@ startxref
 216
 %%EOF";
 
+        private static readonly long[] TestDataOffsets =
+        {
+            TestData.IndexOf("2 17 obj", StringComparison.OrdinalIgnoreCase),
+            TestData.IndexOf("3 0 obj", StringComparison.OrdinalIgnoreCase),
+            TestData.IndexOf("4 0 obj", StringComparison.OrdinalIgnoreCase),
+            TestData.IndexOf("5 0 obj", StringComparison.OrdinalIgnoreCase)
+        };
+
         [Fact]
         public void ReaderNull_Throws()
         {
-            Action action = () => new BruteForceSearcher(null);
+            Action action = () => BruteForceSearcher.GetObjectLocations(null);
 
             Assert.Throws<ArgumentNullException>(action);
         }
@@ -48,19 +58,11 @@ startxref
         {
             var input = new ByteArrayInputBytes(OtherEncodings.StringAsLatin1Bytes(TestData));
 
-            var searcher = new BruteForceSearcher(input);
-
-            var locations = searcher.GetObjectLocations();
+            var locations = BruteForceSearcher.GetObjectLocations(input);
 
             Assert.Equal(4, locations.Count);
 
-            Assert.Equal(locations.Values, new long[]
-            {
-                TestData.IndexOf("2 17 obj", StringComparison.OrdinalIgnoreCase) + 1,
-                TestData.IndexOf("3 0 obj", StringComparison.OrdinalIgnoreCase) + 1,
-                TestData.IndexOf("4 0 obj", StringComparison.OrdinalIgnoreCase) + 1,
-                TestData.IndexOf("5 0 obj", StringComparison.OrdinalIgnoreCase) + 1
-            });
+            Assert.Equal(TestDataOffsets, locations.Values);
         }
 
         [Fact]
@@ -68,13 +70,11 @@ startxref
         {
             var reader = StringBytesTestConverter.Convert(TestData, false);
 
-            var searcher = new BruteForceSearcher(reader.Bytes);
-
-            var locations = searcher.GetObjectLocations();
+            var locations = BruteForceSearcher.GetObjectLocations(reader.Bytes);
 
             Assert.Equal(4, locations.Count);
-            
-            var newLocations = searcher.GetObjectLocations();
+
+            var newLocations = BruteForceSearcher.GetObjectLocations(reader.Bytes);
 
             Assert.Equal(4, locations.Count);
 
@@ -82,6 +82,169 @@ startxref
             {
                 Assert.Contains(newLocations.Keys, x => x.Equals(keyValuePair.Key));
             }
+        }
+
+        [Fact]
+        public void ReaderEscapesUnexpectedObject()
+        {
+            const string s = @"%PDF-1.7
+abcd
+
+1 0 obj
+<< /Type /Any >>
+
+endobj
+
+%AZ 0 obj
+11 0 obj
+769
+endobj
+
+%%EOF";
+
+            var bytes = new ByteArrayInputBytes(OtherEncodings.StringAsLatin1Bytes(s));
+
+            var locations = BruteForceSearcher.GetObjectLocations(bytes);
+
+            Assert.Equal(2, locations.Count);
+
+            var expectedLocations = new long[]
+            {
+                s.IndexOf("1 0 obj", StringComparison.OrdinalIgnoreCase),
+                s.IndexOf("11 0 obj", StringComparison.OrdinalIgnoreCase)
+            };
+
+            Assert.Equal(expectedLocations, locations.Values);
+        }
+
+        [Fact]
+        public void ReaderEscapesUnexpectedGenerationNumber()
+        {
+            const string s = @"%PDF-2.0
+abcdefghijklmnop
+
+1 0 obj
+256
+endobj
+
+16-0 obj
+
+5 0 obj
+<< /IsEmpty false >>
+endobj";
+
+            var bytes = new ByteArrayInputBytes(OtherEncodings.StringAsLatin1Bytes(s));
+
+            var locations = BruteForceSearcher.GetObjectLocations(bytes);
+
+            Assert.Equal(2, locations.Count);
+
+            var expectedLocations = new long[]
+            {
+                s.IndexOf("1 0 obj", StringComparison.OrdinalIgnoreCase),
+                s.IndexOf("5 0 obj", StringComparison.OrdinalIgnoreCase)
+            };
+
+            Assert.Equal(expectedLocations, locations.Values);
+        }
+
+        [Fact]
+        public void BruteForceSearcherFileOffsetsCorrect()
+        {
+            using (var fs = File.OpenRead(IntegrationHelpers.GetDocumentPath("Single Page Simple - from inkscape.pdf")))
+            {
+                var bytes = new StreamInputBytes(fs);
+
+                var locations = BruteForceSearcher.GetObjectLocations(bytes);
+
+                Assert.Equal(13, locations.Count);
+
+                Assert.Equal(6183, locations[new IndirectReference(1, 0)]);
+                Assert.Equal(244, locations[new IndirectReference(2, 0)]);
+                Assert.Equal(15, locations[new IndirectReference(3, 0)]);
+                Assert.Equal(222, locations[new IndirectReference(4, 0)]);
+                Assert.Equal(5766, locations[new IndirectReference(5, 0)]);
+                Assert.Equal(353, locations[new IndirectReference(6, 0)]);
+                Assert.Equal(581, locations[new IndirectReference(7, 0)]);
+                Assert.Equal(5068, locations[new IndirectReference(8, 0)]);
+                Assert.Equal(5091, locations[new IndirectReference(9, 0)]);
+
+                var s = GetStringAt(bytes, locations[new IndirectReference(3, 0)]);
+                Assert.StartsWith("3 0 obj", s);
+            }
+        }
+
+        [Fact]
+        public void BruteForceSearcherBytesFileOffsetsCorrect()
+        {
+            var bytes = new ByteArrayInputBytes(File.ReadAllBytes(IntegrationHelpers.GetDocumentPath("Single Page Simple - from inkscape.pdf")));
+
+            var locations = BruteForceSearcher.GetObjectLocations(bytes);
+
+            Assert.Equal(13, locations.Count);
+
+            Assert.Equal(6183, locations[new IndirectReference(1, 0)]);
+            Assert.Equal(244, locations[new IndirectReference(2, 0)]);
+            Assert.Equal(15, locations[new IndirectReference(3, 0)]);
+            Assert.Equal(222, locations[new IndirectReference(4, 0)]);
+            Assert.Equal(5766, locations[new IndirectReference(5, 0)]);
+            Assert.Equal(353, locations[new IndirectReference(6, 0)]);
+            Assert.Equal(581, locations[new IndirectReference(7, 0)]);
+            Assert.Equal(5068, locations[new IndirectReference(8, 0)]);
+            Assert.Equal(5091, locations[new IndirectReference(9, 0)]);
+
+            var s = GetStringAt(bytes, locations[new IndirectReference(3, 0)]);
+            Assert.StartsWith("3 0 obj", s);
+        }
+
+        [Fact]
+        public void BruteForceSearcherFileOffsetsCorrectOpenOffice()
+        {
+            var bytes = new ByteArrayInputBytes(File.ReadAllBytes(IntegrationHelpers.GetDocumentPath("Single Page Simple - from open office.pdf")));
+
+            var locations = BruteForceSearcher.GetObjectLocations(bytes);
+
+            Assert.Equal(13, locations.Count);
+
+            Assert.Equal(17, locations[new IndirectReference(1, 0)]);
+            Assert.Equal(249, locations[new IndirectReference(2, 0)]);
+            Assert.Equal(14291, locations[new IndirectReference(3, 0)]);
+            Assert.Equal(275, locations[new IndirectReference(4, 0)]);
+            Assert.Equal(382, locations[new IndirectReference(5, 0)]);
+            Assert.Equal(13283, locations[new IndirectReference(6, 0)]);
+            Assert.Equal(13309, locations[new IndirectReference(7, 0)]);
+            Assert.Equal(13556, locations[new IndirectReference(8, 0)]);
+            Assert.Equal(13926, locations[new IndirectReference(9, 0)]);
+            Assert.Equal(14183, locations[new IndirectReference(10, 0)]);
+            Assert.Equal(14224, locations[new IndirectReference(11, 0)]);
+            Assert.Equal(14428, locations[new IndirectReference(12, 0)]);
+            Assert.Equal(14488, locations[new IndirectReference(13, 0)]);
+
+            var s = GetStringAt(bytes, locations[new IndirectReference(12, 0)]);
+            Assert.StartsWith("12 0 obj", s);
+        }
+
+        [Fact]
+        public void BruteForceSearcherCorrectlyFindsAllObjectsWhenOffset()
+        {
+            var input = new ByteArrayInputBytes(OtherEncodings.StringAsLatin1Bytes(TestData));
+
+            input.Seek(593);
+
+            var locations = BruteForceSearcher.GetObjectLocations(input);
+
+            Assert.Equal(TestDataOffsets, locations.Values);
+        }
+
+        private static string GetStringAt(IInputBytes bytes, long location)
+        {
+            bytes.Seek(location);
+            var txt = new byte[10];
+            bytes.Read(txt);
+
+            var s = OtherEncodings.BytesAsLatin1String(txt);
+
+            return s;
         }
     }
 }

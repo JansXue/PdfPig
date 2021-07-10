@@ -29,7 +29,41 @@
             StreamDictionary = streamDictionary ?? throw new ArgumentNullException(nameof(streamDictionary));
             Data = data ?? throw new ArgumentNullException(nameof(data));
         }
-        
+
+        /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (!(obj is StreamToken other))
+            {
+                return false;
+            }
+
+            if (!StreamDictionary.Equals(other.StreamDictionary))
+            {
+                return false;
+            }
+
+            if (Data.Count != other.Data.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < Data.Count; ++index)
+            {
+                if (Data[index] != other.Data[index])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         /// <inheritdoc />
         public override string ToString()
         {

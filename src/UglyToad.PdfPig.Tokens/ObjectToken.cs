@@ -38,6 +38,22 @@
         }
 
         /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (!(obj is ObjectToken other))
+            {
+                return false;
+            }
+
+            return Number.Equals(other.Number) && Data.Equals(other.Data);
+        }
+
+        /// <inheritdoc />
         public override string ToString()
         {
             return $"Number: {Number}, Position: {Position}, Type: {Data.GetType().Name}";

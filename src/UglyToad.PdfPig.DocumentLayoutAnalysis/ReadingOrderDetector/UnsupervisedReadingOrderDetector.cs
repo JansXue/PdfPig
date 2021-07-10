@@ -1,31 +1,116 @@
 ﻿namespace UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector
 {
+    using System;
     using System.Collections.Generic;
     using System.Linq;
 
     /// <summary>
-    /// Algorithm that retrieve the blocks' reading order using both (spatial) Allen’s interval relations and rendering order (TextSequence).
-    /// <para>See section 5.1 of 'Unsupervised document structure analysis of digital scientific articles' by S. Klampfl, M. Granitzer, K. Jack, R. Kern and 'Document Understanding for a Broad Class of Documents' by L. Todoran, M. Worring, M. Aiello and C. Monz.</para>
+    /// Algorithm that retrieve the blocks' reading order using spatial reasoning (Allen’s interval relations) and possibly the rendering order (TextSequence).
+    /// <para>See section 4.1 of 'Unsupervised document structure analysis of digital scientific articles' by S. Klampfl, M. Granitzer, K. Jack, R. Kern
+    /// and 'Document Understanding for a Broad Class of Documents' by L. Todoran, M. Worring, M. Aiello and C. Monz.</para>
     /// </summary>
     public class UnsupervisedReadingOrderDetector : IReadingOrderDetector
     {
         /// <summary>
+        /// The rules encoding the spatial reasoning constraints.
+        /// <para>See 'Document Understanding for a Broad Class of Documents' by L. Todoran, M. Worring, M. Aiello and C. Monz.</para>
+        /// </summary>
+        public enum SpatialReasoningRules
+        {
+            /// <summary>
+            /// Basic spacial reasoning.
+            /// <para>In western culture the reading order is from left to right and from top to bottom.</para>
+            /// </summary>
+            Basic = 0,
+
+            /// <summary>
+            /// Text-blocks are read in rows from left-to-right, top-to-bottom.
+            /// <para>The diagonal direction 'left-bottom to top-right' cannot be present among the Basic relations allowed.</para>
+            /// </summary>
+            RowWise = 1,
+
+            /// <summary>
+            /// Text-blocks are read in columns, from top-to-bottom and from left-to-right.
+            /// <para>The diagonal direction 'right-top to bottom-left' cannot be present among the Basic relations allowed.</para>
+            /// </summary>
+            ColumnWise = 2
+        }
+
+        /// <summary>
         /// Create an instance of unsupervised reading order detector, <see cref="UnsupervisedReadingOrderDetector"/>.
-        /// <para>This detector uses the (spatial) Allen’s interval relations and rendering order (TextSequence).</para>
+        /// <para>This detector uses spatial reasoning (Allen’s interval relations) and possibly the rendering order (TextSequence).</para>
         /// </summary>
         public static UnsupervisedReadingOrderDetector Instance { get; } = new UnsupervisedReadingOrderDetector();
 
-        private double T;
+        /// <summary>
+        /// Whether or not to also use the rendering order, as indicated by the TextSequence.
+        /// </summary>
+        public bool UseRenderingOrder { get; }
 
         /// <summary>
-        /// Algorithm that retrieve the blocks' reading order using both (spatial) Allen’s interval relations and rendering order.
+        /// The rule to be used that encodes the spatial reasoning constraints.
+        /// </summary>
+        public SpatialReasoningRules SpatialReasoningRule { get; }
+
+        /// <summary>
+        /// The tolerance parameter T. If two coordinates are closer than T they are considered equal.
+        /// <para>This flexibility is necessary because due to the inherent noise in the PDF extraction text blocks in the
+        /// same column might not be exactly aligned.</para>
+        /// </summary>
+        public double T { get; }
+
+        private Func<TextBlock, TextBlock, double, bool> getBeforeInMethod;
+
+        /// <summary>
+        /// Algorithm that retrieve the blocks' reading order using spatial reasoning (Allen’s interval relations) and possibly the rendering order (TextSequence).
         /// </summary>
         /// <param name="T">The tolerance parameter T. If two coordinates are closer than T they are considered equal.
-        /// This flexibility is necessary because due to the inherent noise in the PDF extraction text blocks in the 
+        /// This flexibility is necessary because due to the inherent noise in the PDF extraction text blocks in the
         /// same column might not be exactly aligned.</param>
-        public UnsupervisedReadingOrderDetector(double T = 5)
+        /// <param name="spatialReasoningRule">The rule to be used that encodes the spatial reasoning constraints.</param>
+        /// <param name="useRenderingOrder">Whether or not to also use the rendering order, as indicated by the TextSequence.</param>
+        public UnsupervisedReadingOrderDetector(double T = 5, SpatialReasoningRules spatialReasoningRule = SpatialReasoningRules.ColumnWise, bool useRenderingOrder = true)
         {
             this.T = T;
+            this.SpatialReasoningRule = spatialReasoningRule;
+            this.UseRenderingOrder = useRenderingOrder;
+
+            switch (SpatialReasoningRule)
+            {
+                case SpatialReasoningRules.ColumnWise:
+                    if (UseRenderingOrder)
+                    {
+                        getBeforeInMethod = (TextBlock a, TextBlock b, double t) => GetBeforeInReadingVertical(a, b, t) || GetBeforeInRendering(a, b);
+                    }
+                    else
+                    {
+                        getBeforeInMethod = GetBeforeInReadingVertical;
+                    }
+                    break;
+
+                case SpatialReasoningRules.RowWise:
+                    if (UseRenderingOrder)
+                    {
+                        getBeforeInMethod = (TextBlock a, TextBlock b, double t) => GetBeforeInReadingHorizontal(a, b, t) || GetBeforeInRendering(a, b);
+                    }
+                    else
+                    {
+                        getBeforeInMethod = GetBeforeInReadingHorizontal;
+                    }
+                    break;
+
+                case SpatialReasoningRules.Basic:
+                default:
+                    if (UseRenderingOrder)
+                    {
+                        getBeforeInMethod = (TextBlock a, TextBlock b, double t) => GetBeforeInReading(a, b, t) || GetBeforeInRendering(a, b);
+                    }
+                    else
+                    {
+                        getBeforeInMethod = GetBeforeInReading;
+                    }
+                    break;
+            }
         }
 
         /// <summary>
@@ -38,10 +123,10 @@
 
             var graph = BuildGraph(textBlocks, T);
 
-            while (graph.Any())
+            while (graph.Count > 0)
             {
                 var maxCount = graph.Max(kvp => kvp.Value.Count);
-                var current = graph.Where(kvp => kvp.Value.Count == maxCount).FirstOrDefault();
+                var current = graph.FirstOrDefault(kvp => kvp.Value.Count == maxCount);
                 graph.Remove(current.Key);
                 int index = current.Key;
 
@@ -78,7 +163,7 @@
                     if (i == j) continue;
                     var b = textBlocks[j];
 
-                    if (GetBeforeInReadingRendering(a, b, T))
+                    if (getBeforeInMethod(a, b, T))
                     {
                         graph[i].Add(j);
                     }
@@ -88,49 +173,44 @@
             return graph;
         }
 
-        private bool GetBeforeInReadingRendering(TextBlock a, TextBlock b, double T)
-        {
-            return GetBeforeInReadingVertical(a, b, T) || GetBeforeInRendering(a, b);
-        }
-
-        private bool GetBeforeInRendering(TextBlock a, TextBlock b)
+        private static bool GetBeforeInRendering(TextBlock a, TextBlock b)
         {
             var avgTextSequenceA = a.TextLines.SelectMany(tl => tl.Words).SelectMany(w => w.Letters).Select(l => l.TextSequence).Average();
             var avgTextSequenceB = b.TextLines.SelectMany(tl => tl.Words).SelectMany(w => w.Letters).Select(l => l.TextSequence).Average();
             return avgTextSequenceA < avgTextSequenceB;
         }
 
-        private bool GetBeforeInReading(TextBlock a, TextBlock b, double T)
+        /// <summary>
+        /// Rule encoding the fact that in western culture the reading order is from left to right and from top to bottom.
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="T">The tolerance parameter T.</param>
+        private static bool GetBeforeInReading(TextBlock a, TextBlock b, double T)
         {
             IntervalRelations xRelation = GetIntervalRelationX(a, b, T);
             IntervalRelations yRelation = GetIntervalRelationY(a, b, T);
 
-            if (xRelation == IntervalRelations.Precedes ||
-                yRelation == IntervalRelations.Precedes ||
-                xRelation == IntervalRelations.Meets ||
-                yRelation == IntervalRelations.Meets ||
-                xRelation == IntervalRelations.Overlaps ||
-                yRelation == IntervalRelations.Overlaps)
-            {
-                return true;
-            }
-
-            return false;
+            return xRelation == IntervalRelations.Precedes ||
+                   yRelation == IntervalRelations.Precedes ||
+                   xRelation == IntervalRelations.Meets ||
+                   yRelation == IntervalRelations.Meets ||
+                   xRelation == IntervalRelations.Overlaps ||
+                   yRelation == IntervalRelations.Overlaps;
         }
- 
+
         /// <summary>
         /// Column-wise: text-blocks are read in columns, from top-to-bottom and from left-to-right.
         /// </summary>
         /// <param name="a"></param>
         /// <param name="b"></param>
         /// <param name="T">The tolerance parameter T.</param>
-        /// <returns></returns>
-        private bool GetBeforeInReadingVertical(TextBlock a, TextBlock b, double T)
+        private static bool GetBeforeInReadingVertical(TextBlock a, TextBlock b, double T)
         {
             IntervalRelations xRelation = GetIntervalRelationX(a, b, T);
             IntervalRelations yRelation = GetIntervalRelationY(a, b, T);
 
-            if (xRelation == IntervalRelations.Precedes ||
+            return xRelation == IntervalRelations.Precedes ||
                 xRelation == IntervalRelations.Meets ||
                 (xRelation == IntervalRelations.Overlaps && (yRelation == IntervalRelations.Precedes ||
                                                              yRelation == IntervalRelations.Meets ||
@@ -146,12 +226,7 @@
                                                              xRelation == IntervalRelations.DuringI ||
                                                              xRelation == IntervalRelations.Finishes ||
                                                              xRelation == IntervalRelations.StartsI ||
-                                                             xRelation == IntervalRelations.OverlapsI)))
-            {
-                return true;
-            }
-
-            return false;
+                                                             xRelation == IntervalRelations.OverlapsI));
         }
 
         /// <summary>
@@ -160,206 +235,196 @@
         /// <param name="a"></param>
         /// <param name="b"></param>
         /// <param name="T">The tolerance parameter T.</param>
-        /// <returns></returns>
-        private bool GetBeforeInReadingHorizontal(TextBlock a, TextBlock b, double T)
+        private static bool GetBeforeInReadingHorizontal(TextBlock a, TextBlock b, double T)
         {
             IntervalRelations xRelation = GetIntervalRelationX(a, b, T);
             IntervalRelations yRelation = GetIntervalRelationY(a, b, T);
 
-            if (yRelation == IntervalRelations.Precedes ||
-                yRelation == IntervalRelations.Meets ||
-                (yRelation == IntervalRelations.Overlaps && (xRelation == IntervalRelations.Precedes ||
-                                                             xRelation == IntervalRelations.Meets ||
-                                                             xRelation == IntervalRelations.Overlaps)) ||
-                ((xRelation == IntervalRelations.Precedes || xRelation == IntervalRelations.Meets || xRelation == IntervalRelations.Overlaps) &&
-                                                            (yRelation == IntervalRelations.Precedes ||
-                                                             yRelation == IntervalRelations.Meets ||
-                                                             yRelation == IntervalRelations.Overlaps ||
-                                                             yRelation == IntervalRelations.Starts ||
-                                                             yRelation == IntervalRelations.FinishesI ||
-                                                             yRelation == IntervalRelations.Equals ||
-                                                             yRelation == IntervalRelations.During ||
-                                                             yRelation == IntervalRelations.DuringI ||
-                                                             yRelation == IntervalRelations.Finishes ||
-                                                             yRelation == IntervalRelations.StartsI ||
-                                                             yRelation == IntervalRelations.OverlapsI)))
-            {
-                return true;
-            }
-
-            return false;
+            return yRelation == IntervalRelations.Precedes ||
+                   yRelation == IntervalRelations.Meets ||
+                    (yRelation == IntervalRelations.Overlaps && (xRelation == IntervalRelations.Precedes ||
+                                                                 xRelation == IntervalRelations.Meets ||
+                                                                 xRelation == IntervalRelations.Overlaps)) ||
+                    ((xRelation == IntervalRelations.Precedes || xRelation == IntervalRelations.Meets || xRelation == IntervalRelations.Overlaps) &&
+                                                                (yRelation == IntervalRelations.Precedes ||
+                                                                 yRelation == IntervalRelations.Meets ||
+                                                                 yRelation == IntervalRelations.Overlaps ||
+                                                                 yRelation == IntervalRelations.Starts ||
+                                                                 yRelation == IntervalRelations.FinishesI ||
+                                                                 yRelation == IntervalRelations.Equals ||
+                                                                 yRelation == IntervalRelations.During ||
+                                                                 yRelation == IntervalRelations.DuringI ||
+                                                                 yRelation == IntervalRelations.Finishes ||
+                                                                 yRelation == IntervalRelations.StartsI ||
+                                                                 yRelation == IntervalRelations.OverlapsI));
         }
 
         /// <summary>
         /// Gets the Thick Boundary Rectangle Relations (TBRR) for the X coordinate.
-        /// <para>The Thick Boundary Rectangle Relations (TBRR) is a set of qualitative relations representing the spatial relations of the document objects on the page. 
-        /// For every pair of document objects a and b, one X and one Y interval relation hold. If one considers the pair in reversed 
+        /// <para>The Thick Boundary Rectangle Relations (TBRR) is a set of qualitative relations representing the spatial relations of the document objects on the page.
+        /// For every pair of document objects a and b, one X and one Y interval relation hold. If one considers the pair in reversed
         /// order, the inverse interval relation holds. Therefore the directed graph g_i representing these relations is complete.</para>
         /// </summary>
         /// <param name="a"></param>
         /// <param name="b"></param>
         /// <param name="T">The tolerance parameter T. If two coordinates are closer than T they are considered equal.</param>
-        private IntervalRelations GetIntervalRelationX(TextBlock a, TextBlock b, double T)
+        private static IntervalRelations GetIntervalRelationX(TextBlock a, TextBlock b, double T)
         {
-            IntervalRelations xRelation = IntervalRelations.Unknown;
-
             if (a.BoundingBox.Right < b.BoundingBox.Left - T)
             {
-                xRelation = IntervalRelations.Precedes;
+                return IntervalRelations.Precedes;
             }
             else if (a.BoundingBox.Right >= b.BoundingBox.Left - T)
             {
-                xRelation = IntervalRelations.PrecedesI;
+                return IntervalRelations.PrecedesI;
             }
 
             else if (b.BoundingBox.Left - T <= a.BoundingBox.Right
                 && a.BoundingBox.Right <= b.BoundingBox.Left + T)
             {
-                xRelation = IntervalRelations.Meets;
+                return IntervalRelations.Meets;
             }
             else if (b.BoundingBox.Left - T > a.BoundingBox.Right
                 && a.BoundingBox.Right > b.BoundingBox.Left + T)
             {
-                xRelation = IntervalRelations.MeetsI;
+                return IntervalRelations.MeetsI;
             }
 
             else if (a.BoundingBox.Left < b.BoundingBox.Left - T
                 && (b.BoundingBox.Left + T < a.BoundingBox.Right && a.BoundingBox.Right < b.BoundingBox.Right - T))
             {
-                xRelation = IntervalRelations.Overlaps;
+                return IntervalRelations.Overlaps;
             }
             else if (a.BoundingBox.Left >= b.BoundingBox.Left - T
                && (b.BoundingBox.Left + T >= a.BoundingBox.Right && a.BoundingBox.Right >= b.BoundingBox.Right - T))
             {
-                xRelation = IntervalRelations.OverlapsI;
+                return IntervalRelations.OverlapsI;
             }
 
-            else if ((b.BoundingBox.Left - T <= a.BoundingBox.Left && a.BoundingBox.Left <= b.BoundingBox.Left + T)
+            else if (b.BoundingBox.Left - T <= a.BoundingBox.Left && a.BoundingBox.Left <= b.BoundingBox.Left + T
                 && a.BoundingBox.Right < b.BoundingBox.Right - T)
             {
-                xRelation = IntervalRelations.Starts;
+                return IntervalRelations.Starts;
             }
-            else if ((b.BoundingBox.Left - T > a.BoundingBox.Left && a.BoundingBox.Left > b.BoundingBox.Left + T)
+            else if (b.BoundingBox.Left - T > a.BoundingBox.Left && a.BoundingBox.Left > b.BoundingBox.Left + T
                 && a.BoundingBox.Right >= b.BoundingBox.Right - T)
             {
-                xRelation = IntervalRelations.StartsI;
+                return IntervalRelations.StartsI;
             }
 
             else if (a.BoundingBox.Left > b.BoundingBox.Left + T
                 && a.BoundingBox.Right < b.BoundingBox.Right - T)
             {
-                xRelation = IntervalRelations.During;
+                return IntervalRelations.During;
             }
             else if (a.BoundingBox.Left <= b.BoundingBox.Left + T
                 && a.BoundingBox.Right >= b.BoundingBox.Right - T)
             {
-                xRelation = IntervalRelations.DuringI;
+                return IntervalRelations.DuringI;
             }
 
             else if (a.BoundingBox.Left > b.BoundingBox.Left + T
                 && (b.BoundingBox.Right - T <= a.BoundingBox.Right && a.BoundingBox.Right <= b.BoundingBox.Right + T))
             {
-                xRelation = IntervalRelations.Finishes;
+                return IntervalRelations.Finishes;
             }
             else if (a.BoundingBox.Left <= b.BoundingBox.Left + T
                 && (b.BoundingBox.Right - T > a.BoundingBox.Right && a.BoundingBox.Right > b.BoundingBox.Right + T))
             {
-                xRelation = IntervalRelations.FinishesI;
+                return IntervalRelations.FinishesI;
             }
 
-            else if ((b.BoundingBox.Left - T <= a.BoundingBox.Left && a.BoundingBox.Left <= b.BoundingBox.Left + T)
+            else if (b.BoundingBox.Left - T <= a.BoundingBox.Left && a.BoundingBox.Left <= b.BoundingBox.Left + T
                 && (b.BoundingBox.Right - T <= a.BoundingBox.Right && a.BoundingBox.Right <= b.BoundingBox.Right + T))
             {
-                xRelation = IntervalRelations.Equals;
+                return IntervalRelations.Equals;
             }
 
-            return xRelation;
+            return IntervalRelations.Unknown;
         }
 
         /// <summary>
         /// Gets the Thick Boundary Rectangle Relations (TBRR) for the Y coordinate.
-        /// <para>The Thick Boundary Rectangle Relations (TBRR) is a set of qualitative relations representing the spatial relations of the document objects on the page. 
-        /// For every pair of document objects a and b, one X and one Y interval relation hold. If one considers the pair in reversed 
+        /// <para>The Thick Boundary Rectangle Relations (TBRR) is a set of qualitative relations representing the spatial relations of the document objects on the page.
+        /// For every pair of document objects a and b, one X and one Y interval relation hold. If one considers the pair in reversed
         /// order, the inverse interval relation holds. Therefore the directed graph g_i representing these relations is complete.</para>
         /// </summary>
         /// <param name="a"></param>
         /// <param name="b"></param>
         /// <param name="T">The tolerance parameter T. If two coordinates are closer than T they are considered equal.</param>
-        private IntervalRelations GetIntervalRelationY(TextBlock a, TextBlock b, double T)
+        private static IntervalRelations GetIntervalRelationY(TextBlock a, TextBlock b, double T)
         {
-            IntervalRelations yRelation = IntervalRelations.Unknown;
-
             if (a.BoundingBox.Bottom < b.BoundingBox.Top - T)
             {
-                yRelation = IntervalRelations.PrecedesI;
+                return IntervalRelations.PrecedesI;
             }
             else if (a.BoundingBox.Bottom >= b.BoundingBox.Top - T)
             {
-                yRelation = IntervalRelations.Precedes;
+                return IntervalRelations.Precedes;
             }
 
             else if (b.BoundingBox.Top - T <= a.BoundingBox.Bottom
                 && a.BoundingBox.Bottom <= b.BoundingBox.Top + T)
             {
-                yRelation = IntervalRelations.MeetsI;
+                return IntervalRelations.MeetsI;
             }
             else if (b.BoundingBox.Top - T > a.BoundingBox.Bottom
                 && a.BoundingBox.Bottom > b.BoundingBox.Top + T)
             {
-                yRelation = IntervalRelations.Meets;
+                return IntervalRelations.Meets;
             }
 
             else if (a.BoundingBox.Top < b.BoundingBox.Top - T
                 && (b.BoundingBox.Top + T < a.BoundingBox.Bottom && a.BoundingBox.Bottom < b.BoundingBox.Bottom - T))
             {
-                yRelation = IntervalRelations.OverlapsI;
+                return IntervalRelations.OverlapsI;
             }
             else if (a.BoundingBox.Top >= b.BoundingBox.Top - T
                && (b.BoundingBox.Top + T >= a.BoundingBox.Bottom && a.BoundingBox.Bottom >= b.BoundingBox.Bottom - T))
             {
-                yRelation = IntervalRelations.Overlaps;
+                return IntervalRelations.Overlaps;
             }
 
-            else if ((b.BoundingBox.Top - T <= a.BoundingBox.Top && a.BoundingBox.Top <= b.BoundingBox.Top + T)
+            else if (b.BoundingBox.Top - T <= a.BoundingBox.Top && a.BoundingBox.Top <= b.BoundingBox.Top + T
                 && a.BoundingBox.Bottom < b.BoundingBox.Bottom - T)
             {
-                yRelation = IntervalRelations.StartsI;
+                return IntervalRelations.StartsI;
             }
-            else if ((b.BoundingBox.Top - T > a.BoundingBox.Top && a.BoundingBox.Top > b.BoundingBox.Top + T)
+            else if (b.BoundingBox.Top - T > a.BoundingBox.Top && a.BoundingBox.Top > b.BoundingBox.Top + T
                 && a.BoundingBox.Bottom >= b.BoundingBox.Bottom - T)
             {
-                yRelation = IntervalRelations.Starts;
+                return IntervalRelations.Starts;
             }
 
             else if (a.BoundingBox.Top > b.BoundingBox.Top + T
                 && a.BoundingBox.Bottom < b.BoundingBox.Bottom - T)
             {
-                yRelation = IntervalRelations.DuringI;
+                return IntervalRelations.DuringI;
             }
             else if (a.BoundingBox.Top <= b.BoundingBox.Top + T
                 && a.BoundingBox.Bottom >= b.BoundingBox.Bottom - T)
             {
-                yRelation = IntervalRelations.During;
+                return IntervalRelations.During;
             }
 
             else if (a.BoundingBox.Top > b.BoundingBox.Top + T
                 && (b.BoundingBox.Bottom - T <= a.BoundingBox.Bottom && a.BoundingBox.Bottom <= b.BoundingBox.Bottom + T))
             {
-                yRelation = IntervalRelations.FinishesI;
+                return IntervalRelations.FinishesI;
             }
             else if (a.BoundingBox.Top <= b.BoundingBox.Top + T
                 && (b.BoundingBox.Bottom - T > a.BoundingBox.Bottom && a.BoundingBox.Bottom > b.BoundingBox.Bottom + T))
             {
-                yRelation = IntervalRelations.Finishes;
+                return IntervalRelations.Finishes;
             }
 
             else if ((b.BoundingBox.Top - T <= a.BoundingBox.Top && a.BoundingBox.Top <= b.BoundingBox.Top + T)
                 && (b.BoundingBox.Bottom - T <= a.BoundingBox.Bottom && a.BoundingBox.Bottom <= b.BoundingBox.Bottom + T))
             {
-                yRelation = IntervalRelations.Equals;
+                return IntervalRelations.Equals;
             }
 
-            return yRelation;
+            return IntervalRelations.Unknown;
         }
 
         /// <summary>
@@ -451,14 +516,6 @@
             /// <para>..........|____Y____|............</para>
             /// </summary>
             Equals
-        }
-
-        private class NodeComparer : IComparer<KeyValuePair<int, List<int>>>
-        {
-            public int Compare(KeyValuePair<int, List<int>> x, KeyValuePair<int, List<int>> y)
-            {
-                return x.Value.Count.CompareTo(y.Value.Count);
-            }
         }
     }
 }

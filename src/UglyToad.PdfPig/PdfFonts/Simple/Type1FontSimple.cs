@@ -1,7 +1,6 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Simple
 {
     using System.Collections.Generic;
-    using System.Linq;
     using Cmap;
     using Composite;
     using Core;
@@ -17,6 +16,8 @@
     /// </summary>
     internal class Type1FontSimple : IFont
     {
+        private static readonly TransformationMatrix DefaultTransformationMatrix = TransformationMatrix.FromValues(0.001, 0, 0, 0.001, 0, 0);
+
         private readonly Dictionary<int, CharacterBoundingBox> cachedBoundingBoxes = new Dictionary<int, CharacterBoundingBox>();
 
         private readonly int firstChar;
@@ -40,6 +41,8 @@
 
         public bool IsVertical { get; } = false;
 
+        public FontDetails Details { get; }
+
         public Type1FontSimple(NameToken name, int firstChar, int lastChar, double[] widths, FontDescriptor fontDescriptor, Encoding encoding, 
             CMap toUnicodeCMap,
             Union<Type1Font, CompactFontFormatFontCollection> fontProgram)
@@ -52,12 +55,25 @@
             this.fontProgram = fontProgram;
             this.toUnicodeCMap = new ToUnicodeCMap(toUnicodeCMap);
 
-            var matrix = TransformationMatrix.FromValues(0.001, 0, 0, 0.001, 0, 0);
-            fontProgram?.Match(x => matrix = x.FontMatrix, x => { matrix = x.GetFirstTransformationMatrix(); });
+            var matrix = DefaultTransformationMatrix;
+
+            if (fontProgram != null)
+            {
+                if (fontProgram.TryGetFirst(out var t1Font))
+                {
+                    matrix = t1Font.FontMatrix;
+                }
+                else if (fontProgram.TryGetSecond(out var cffFont))
+                {
+                    matrix = cffFont.GetFirstTransformationMatrix();
+                }
+            }
 
             fontMatrix = matrix;
 
             Name = name;
+            Details = fontDescriptor?.ToDetails(name?.Data) 
+                      ?? FontDetails.GetDefault(name?.Data);
         }
 
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
@@ -90,10 +106,11 @@
                     }
 
                     var containsEncoding = false;
-                    var capturedValue = default(string);
-                    fontProgram.Match(x => { containsEncoding = x.Encoding.TryGetValue(characterCode, out capturedValue); },
-                        _ => {});
-                    value = capturedValue;
+                    if (fontProgram.TryGetFirst(out var t1Font))
+                    {
+                        containsEncoding = t1Font.Encoding.TryGetValue(characterCode, out value);
+                    }
+
                     return containsEncoding;
                 }
             }
@@ -125,9 +142,9 @@
 
             boundingBox = matrix.Transform(boundingBox);
 
-            var width = matrix.TransformX(GetWidth(characterCode, boundingBox));
+            var width = GetWidth(characterCode, boundingBox);
 
-            var result = new CharacterBoundingBox(boundingBox, width);
+            var result = new CharacterBoundingBox(boundingBox, width/1000.0);
 
             cachedBoundingBoxes[characterCode] = result;
 
@@ -163,14 +180,15 @@
                 return new PdfRectangle(0, 0, widths[characterCode - firstChar], 0);
             }
 
-            var rect = fontProgram.Match(x =>
-                {
-                    var name = encoding.GetName(characterCode);
-                    return x.GetCharacterBoundingBox(name);
-                },
-                x =>
-                {
-                    var first = x.Fonts.First().Value;
+            PdfRectangle? rect = null;
+            if (fontProgram.TryGetFirst(out var t1Font))
+            {
+                 var name = encoding.GetName(characterCode);
+                    rect = t1Font.GetCharacterBoundingBox(name);
+            }
+            else if (fontProgram.TryGetSecond(out var cffFont))
+            {
+                    var first = cffFont.FirstFont;
                     string characterName;
                     if (encoding != null)
                     {
@@ -178,11 +196,12 @@
                     }
                     else
                     {
-                        characterName = x.GetCharacterName(characterCode);
+                        characterName = cffFont.GetCharacterName(characterCode);
                     }
 
-                    return first.GetCharacterBoundingBox(characterName);
-                });
+                    rect = first.GetCharacterBoundingBox(characterName);
+            }
+
 
             if (!rect.HasValue)
             {

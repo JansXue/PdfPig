@@ -1,9 +1,7 @@
+using UglyToad.PdfPig.Tokenization;
+
 namespace UglyToad.PdfPig.Graphics
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Reflection;
     using Operations;
     using Operations.ClippingPaths;
     using Operations.Compatibility;
@@ -17,10 +15,17 @@ namespace UglyToad.PdfPig.Graphics
     using Operations.TextShowing;
     using Operations.TextState;
     using PdfPig.Core;
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Reflection;
     using Tokens;
+    using UglyToad.PdfPig.Graphics.Operations.PathPainting;
 
     internal class ReflectionGraphicsStateOperationFactory : IGraphicsStateOperationFactory
     {
+        private static readonly ListPool<decimal> DecimalListPool = new ListPool<decimal>(10);
+
         private readonly IReadOnlyDictionary<string, Type> operations;
 
         public ReflectionGraphicsStateOperationFactory()
@@ -51,7 +56,7 @@ namespace UglyToad.PdfPig.Graphics
 
         private static decimal[] TokensToDecimalArray(IReadOnlyList<IToken> tokens, bool exceptLast = false)
         {
-            var result = new List<decimal>();
+            var result = DecimalListPool.Borrow();
 
             for (var i = 0; i < tokens.Count - (exceptLast ? 1 : 0); i++)
             {
@@ -65,7 +70,9 @@ namespace UglyToad.PdfPig.Graphics
 
                         if (!(innerOperand is NumericToken innerNumeric))
                         {
-                            return result.ToArray();
+                            var val = result.ToArray();
+                            DecimalListPool.Return(result);
+                            return val.ToArray();
                         }
 
                         result.Add(innerNumeric.Data);
@@ -74,13 +81,17 @@ namespace UglyToad.PdfPig.Graphics
 
                 if (!(operand is NumericToken numeric))
                 {
-                    return result.ToArray();
+                    var val = result.ToArray();
+                    DecimalListPool.Return(result);
+                    return val.ToArray();
                 }
 
                 result.Add(numeric.Data);
             }
 
-            return result.ToArray();
+            var returnValue = result.ToArray();
+            DecimalListPool.Return(result);
+            return returnValue;
         }
 
         private static int OperandToInt(IToken token)
@@ -385,6 +396,11 @@ namespace UglyToad.PdfPig.Graphics
 
             foreach (var parameter in parameters)
             {
+                if (offset >= operands.Count)
+                {
+                    throw new InvalidOperationException($"Fewer operands {operands.Count} found than required ({offset + 1}) for operator: {op.Data}.");
+                }
+
                 if (parameter.ParameterType == typeof(decimal))
                 {
                     if (operands[offset] is NumericToken numeric)

@@ -138,6 +138,22 @@ namespace UglyToad.PdfPig.Tokens
             return value;
         }
 
+        /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (!(obj is HexToken other))
+            {
+                return false;
+            }
+
+            return Data == other.Data;
+        }
+
         /// <summary>
         /// Converts the binary data back to a hex string representation.
         /// </summary>

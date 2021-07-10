@@ -13,5 +13,16 @@
         private EndOfLineToken()
         {
         }
+
+        /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            return obj is EndOfLineToken;
+        }
     }
 }

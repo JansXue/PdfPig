@@ -18,5 +18,35 @@
         {
             Data = data;
         }
+
+        /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (!(obj is InlineImageDataToken other))
+            {
+                return false;
+            }
+
+            if (Data.Count != other.Data.Count)
+            {
+                return false;
+            }
+
+
+            for (var index = 0; index < Data.Count; ++index)
+            {
+                if (Data[index] != other.Data[index])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 }

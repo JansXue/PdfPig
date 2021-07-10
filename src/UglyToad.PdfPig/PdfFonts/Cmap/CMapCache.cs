@@ -12,31 +12,37 @@
 
         private static readonly CMapParser CMapParser = new CMapParser();
 
-        public static CMap Get(string name)
+        public static bool TryGet(string name, out CMap result)
         {
+            result = null;
+
             lock (Lock)
             {
-                if (Cache.TryGetValue(name, out var result))
+                if (Cache.TryGetValue(name, out result))
                 {
-                    return result;
+                    return true;
                 }
 
-                result = CMapParser.ParseExternal(name);
+                if (CMapParser.TryParseExternal(name, out result))
+                {
 
-                Cache[name] = result;
+                    Cache[name] = result;
 
-                return result;
+                    return true;
+                }
+
+                return false;
             }
         }
 
-        public static CMap Parse(IInputBytes bytes, bool isLenientParsing)
+        public static CMap Parse(IInputBytes bytes)
         {
             if (bytes == null)
             {
                 throw new ArgumentNullException(nameof(bytes));
             }
 
-            var result = CMapParser.Parse(bytes, isLenientParsing);
+            var result = CMapParser.Parse(bytes);
 
             return result;
         }

@@ -10,7 +10,7 @@
         [Fact]
         public void BezierCurveGeneratesCorrectBoundingBox()
         {
-            var curve = new PdfPath.BezierCurve(new PdfPoint(60, 105),
+            var curve = new PdfSubpath.BezierCurve(new PdfPoint(60, 105),
                 new PdfPoint(75, 30), 
                 new PdfPoint(215, 115), 
                 new PdfPoint(140, 160));
@@ -28,7 +28,7 @@
         [Fact]
         public void LoopBezierCurveGeneratesCorrectBoundingBox()
         {
-            var curve = new PdfPath.BezierCurve(new PdfPoint(166, 142),
+            var curve = new PdfSubpath.BezierCurve(new PdfPoint(166, 142),
                 new PdfPoint(75, 30),
                 new PdfPoint(215, 115),
                 new PdfPoint(140, 160));
@@ -47,15 +47,15 @@
         [Fact]
         public void BezierCurveAddsCorrectSvgCommand()
         {
-            var curve = new PdfPath.BezierCurve(new PdfPoint(60, 105),
+            var curve = new PdfSubpath.BezierCurve(new PdfPoint(60, 105),
                 new PdfPoint(75, 30),
                 new PdfPoint(215, 115),
                 new PdfPoint(140, 160));
 
             var builder = new StringBuilder();
-            curve.WriteSvg(builder);
+            curve.WriteSvg(builder, 0);
 
-            Assert.Equal("C 75 30, 215 115, 140 160 ", builder.ToString());
+            Assert.Equal("C 75 -30, 215 -115, 140 -160 ", builder.ToString());
         }
     }
 }

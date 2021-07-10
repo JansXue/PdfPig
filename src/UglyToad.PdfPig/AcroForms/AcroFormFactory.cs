@@ -5,7 +5,7 @@
     using System.Linq;
     using Content;
     using Core;
-    using Exceptions;
+    using CrossReference;
     using Fields;
     using Filters;
     using Parser.Parts;
@@ -29,12 +29,14 @@
         };
 
         private readonly IPdfTokenScanner tokenScanner;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
+        private readonly CrossReferenceTable crossReferenceTable;
 
-        public AcroFormFactory(IPdfTokenScanner tokenScanner, IFilterProvider filterProvider)
+        public AcroFormFactory(IPdfTokenScanner tokenScanner, ILookupFilterProvider filterProvider, CrossReferenceTable crossReferenceTable)
         {
             this.tokenScanner = tokenScanner ?? throw new ArgumentNullException(nameof(tokenScanner));
             this.filterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
+            this.crossReferenceTable = crossReferenceTable ?? throw new ArgumentNullException(nameof(crossReferenceTable));
         }
 
         /// <summary>
@@ -44,9 +46,39 @@
         [CanBeNull]
         public AcroForm GetAcroForm(Catalog catalog)
         {
-            if (!catalog.CatalogDictionary.TryGet(NameToken.AcroForm, out var acroRawToken) || !DirectObjectFinder.TryGet(acroRawToken, tokenScanner, out DictionaryToken acroDictionary))
+            if (!catalog.CatalogDictionary.TryGet(NameToken.AcroForm, out var acroRawToken) )
             {
                 return null;
+            }
+
+            if (!DirectObjectFinder.TryGet(acroRawToken, tokenScanner, out DictionaryToken acroDictionary))
+            {
+                var fieldsRefs = new List<IndirectReferenceToken>();
+
+                // Invalid reference, try constructing the form from a Brute Force scan.
+                foreach (var reference in crossReferenceTable.ObjectOffsets.Keys)
+                {
+                    var referenceToken = new IndirectReferenceToken(reference);
+                    if (!DirectObjectFinder.TryGet(referenceToken, tokenScanner, out DictionaryToken dict))
+                    {
+                        continue;
+                    }
+
+                    if (dict.TryGet(NameToken.Kids, tokenScanner, out ArrayToken _) && dict.TryGet(NameToken.T, tokenScanner, out StringToken _))
+                    {
+                        fieldsRefs.Add(referenceToken);
+                    }
+                }
+
+                if (fieldsRefs.Count == 0)
+                {
+                    return null;
+                }
+
+                acroDictionary = new DictionaryToken(new Dictionary<NameToken, IToken>
+                {
+                    { NameToken.Fields, new ArrayToken(fieldsRefs) }
+                });
             }
             
             var signatureFlags = (SignatureFlags)0;
@@ -82,12 +114,10 @@
             {
                 q = qToken.Int;
             }
-
-            var fieldsToken = acroDictionary.Data[NameToken.Fields.Data];
-
-            if (!DirectObjectFinder.TryGet(fieldsToken, tokenScanner, out ArrayToken fieldsArray))
+            
+            if (!acroDictionary.TryGet(NameToken.Fields, tokenScanner, out ArrayToken fieldsArray))
             {
-                throw new PdfDocumentFormatException($"Could not retrieve the fields array for an AcroForm: {acroDictionary}.");
+                return null;
             }
 
             var fields = new Dictionary<IndirectReference, AcroFieldBase>(fieldsArray.Length);
@@ -131,6 +161,10 @@
                     }
 
                     var kidObject = tokenScanner.Get(kidReferenceToken.Data);
+                    if (kidObject is null)
+                    {
+                        throw new InvalidOperationException($"Could not find the object with reference: {kidReferenceToken.Data}.");
+                    }
 
                     if (kidObject.Data is DictionaryToken kidDictionaryToken)
                     {
@@ -279,7 +313,7 @@
                 }
                 else if (DirectObjectFinder.TryGet(textValueToken, tokenScanner, out StreamToken valueStreamToken))
                 {
-                    textValue = OtherEncodings.BytesAsLatin1String(valueStreamToken.Decode(filterProvider).ToArray());
+                    textValue = OtherEncodings.BytesAsLatin1String(valueStreamToken.Decode(filterProvider, tokenScanner).ToArray());
                 }
             }
 
@@ -443,6 +477,17 @@
             var isChecked = false;
             if (!fieldDictionary.TryGetOptionalTokenDirect(NameToken.V, tokenScanner, out NameToken valueToken))
             {
+                if (fieldDictionary.TryGetOptionalTokenDirect(NameToken.As, tokenScanner, out NameToken appearanceStateName)
+                    && fieldDictionary.TryGetOptionalTokenDirect(NameToken.Ap, tokenScanner, out DictionaryToken _))
+                {
+                    // Issue #267 - Use the set appearance instead, this might not work for 3 state checkboxes.
+                    isChecked = !string.Equals(
+                        appearanceStateName.Data,
+                        NameToken.Off,
+                        StringComparison.OrdinalIgnoreCase);
+                    valueToken = appearanceStateName;
+                    return (isChecked, valueToken);
+                }
                 valueToken = NameToken.Off;
             }
             else if (inheritsValue && fieldDictionary.TryGet(NameToken.As, tokenScanner, out NameToken appearanceStateName))

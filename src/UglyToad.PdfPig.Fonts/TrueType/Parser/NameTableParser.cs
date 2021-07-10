@@ -22,10 +22,19 @@
             }
 
             var strings = new TrueTypeNameRecord[count];
+            var offset = header.Offset + stringOffset;
             for (var i = 0; i < count; i++)
             {
-                var nameRecord = names[i];
+                strings[i] = GetTrueTypeNameRecord(names[i], data, offset);
+            }
 
+            return new NameTable(header, GetName(4, strings), GetName(1, strings), GetName(2, strings), strings);
+        }
+
+        private static TrueTypeNameRecord GetTrueTypeNameRecord(NameRecordBuilder nameRecord, TrueTypeDataBytes data, uint offset)
+        {
+            try
+            {
                 var encoding = OtherEncodings.Iso88591;
 
                 switch (nameRecord.PlatformId)
@@ -62,16 +71,27 @@
                         }
                 }
 
-                var position = header.Offset + stringOffset + nameRecord.Offset;
+                var position = offset + nameRecord.Offset;
+
+                if (position >= data.Length)
+                {
+                    return null;
+                }
 
                 data.Seek(position);
 
-                var str = data.ReadString(nameRecord.Length, encoding);
+                if (data.TryReadString(nameRecord.Length, encoding, out var str))
+                { 
+                    return nameRecord.ToNameRecord(str);
+                }
 
-                strings[i] = nameRecord.ToNameRecord(str);
+                // Damaged font
+                return null;
             }
-
-            return new NameTable(header, GetName(4, strings), GetName(1, strings), GetName(2, strings), strings);
+            catch
+            {
+                return null;
+            }
         }
 
         private static string GetName(int nameId, TrueTypeNameRecord[] names)
@@ -84,7 +104,7 @@
             {
                 var name = names[i];
 
-                if (name.NameId != nameId)
+                if (name is null || name.NameId != nameId)
                 {
                     continue;
                 }

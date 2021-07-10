@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Globalization;
     using System.Text;
     using Core;
 
@@ -32,7 +33,7 @@
         /// <param name="name">The name of the character to retrieve the CharString for.</param>
         /// <param name="defaultWidthX">The default width for the glyph from the font's private dictionary.</param>
         /// <param name="nominalWidthX">The nominal width which individual glyph widths are encoded as the difference from.</param>
-        /// <returns>A <see cref="PdfPath"/> for the glyph.</returns>
+        /// <returns>A <see cref="PdfSubpath"/> for the glyph.</returns>
         public Type2Glyph Generate(string name, double defaultWidthX, double nominalWidthX)
         {
             Type2Glyph glyph;
@@ -45,7 +46,10 @@
 
                 if (!CharStrings.TryGetValue(name, out var sequence))
                 {
-                    throw new InvalidOperationException($"No charstring sequence with the name /{name} in this font.");
+                    if (!CharStrings.TryGetValue(".notdef", out sequence))
+                    {
+                        throw new InvalidOperationException($"No charstring sequence with the name /{name} in this font.");
+                    }
                 }
 
                 try
@@ -181,7 +185,7 @@
                     if (i >= 0)
                     {
                         var value = Values[i];
-                        stringBuilder.AppendLine(value.ToString("N"));
+                        stringBuilder.AppendLine(value.ToString("N", CultureInfo.InvariantCulture));
                     }
 
                     foreach (var identifier in GetCommandsAt(i + 1))
@@ -220,7 +224,7 @@
         /// <summary>
         /// The path of the glyph.
         /// </summary>
-        public PdfPath Path { get; }
+        public PdfSubpath Path { get; }
 
         /// <summary>
         /// The width of the glyph as a difference from the nominal width X for the font. Optional.
@@ -230,7 +234,7 @@
         /// <summary>
         /// Create a new <see cref="Type2Glyph"/>.
         /// </summary>
-        public Type2Glyph(PdfPath path, double? width)
+        public Type2Glyph(PdfSubpath path, double? width)
         {
             Path = path ?? throw new ArgumentNullException(nameof(path));
             Width = width;

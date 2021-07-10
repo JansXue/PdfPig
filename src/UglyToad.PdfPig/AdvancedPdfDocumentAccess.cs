@@ -3,6 +3,7 @@
     using System;
     using System.Collections.Generic;
     using Content;
+    using Core;
     using Filters;
     using Parser.Parts;
     using Tokenization.Scanner;
@@ -15,21 +16,18 @@
     public class AdvancedPdfDocumentAccess : IDisposable
     {
         private readonly IPdfTokenScanner pdfScanner;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly Catalog catalog;
-        private readonly bool isLenientParsing;
 
         private bool isDisposed;
 
         internal AdvancedPdfDocumentAccess(IPdfTokenScanner pdfScanner,
-            IFilterProvider filterProvider,
-            Catalog catalog,
-            bool isLenientParsing)
+            ILookupFilterProvider filterProvider,
+            Catalog catalog)
         {
             this.pdfScanner = pdfScanner ?? throw new ArgumentNullException(nameof(pdfScanner));
             this.filterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
             this.catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
-            this.isLenientParsing = isLenientParsing;
         }
 
         /// <summary>
@@ -51,8 +49,7 @@
                 return false;
             }
 
-            var embeddedFileNames = NameTreeParser.FlattenNameTreeToDictionary(embeddedFileNamesDictionary, pdfScanner, isLenientParsing,
-                x => x);
+            var embeddedFileNames = NameTreeParser.FlattenNameTreeToDictionary(embeddedFileNamesDictionary, pdfScanner, x => x);
 
             if (embeddedFileNames.Count == 0)
             {
@@ -76,7 +73,7 @@
                     fileSpecification = fileSpecificationToken.Data;
                 }
 
-                var fileBytes = fileStreamToken.Decode(filterProvider);
+                var fileBytes = fileStreamToken.Decode(filterProvider, pdfScanner);
 
                 result.Add(new EmbeddedFile(keyValuePair.Key, fileSpecification, fileBytes, fileStreamToken));
             }
@@ -84,6 +81,30 @@
             embeddedFiles = result;
 
             return embeddedFiles.Count > 0;
+        }
+
+        /// <summary>
+        /// Replaces the token in an internal cache that will be returned instead of
+        /// scanning the source PDF data for future requests.
+        /// </summary>
+        /// <param name="reference">The object number for the object to replace.</param>
+        /// <param name="replacer">Func that takes existing token as input and return new token.</param>
+        public void ReplaceIndirectObject(IndirectReference reference, Func<IToken, IToken> replacer)
+        {
+            var obj = pdfScanner.Get(reference);
+            var replacement = replacer(obj.Data);
+            pdfScanner.ReplaceToken(reference, replacement);
+        }
+
+        /// <summary>
+        /// Replaces the token in an internal cache that will be returned instead of
+        /// scanning the source PDF data for future requests.
+        /// </summary>
+        /// <param name="reference">The object number for the object to replace.</param>
+        /// <param name="replacement">Replacement token to use.</param>
+        public void ReplaceIndirectObject(IndirectReference reference, IToken replacement)
+        {
+            pdfScanner.ReplaceToken(reference, replacement);
         }
 
         private void GuardDisposed()

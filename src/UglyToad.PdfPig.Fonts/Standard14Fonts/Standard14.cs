@@ -33,8 +33,8 @@
     {
         private static readonly HashSet<string> Standard14Names = new HashSet<string>();
         private static readonly Dictionary<string, string> Standard14Mapping = new Dictionary<string, string>(34);
-        private static readonly Dictionary<string, AdobeFontMetrics> Standard14AfmMap = new Dictionary<string, AdobeFontMetrics>(34);
-        private static readonly Dictionary<Standard14Font, AdobeFontMetrics> Standard14AfmTypeMap = new Dictionary<Standard14Font, AdobeFontMetrics>(14);
+        private static readonly Dictionary<Standard14Font, string> BuilderTypesToNames = new Dictionary<Standard14Font, string>(14);
+        private static readonly Dictionary<string, AdobeFontMetrics> Standard14Cache = new Dictionary<string, AdobeFontMetrics>(34);
 
         static Standard14()
         {
@@ -76,6 +76,13 @@
             AddAdobeFontMetrics("Times,Italic", "Times-Italic");
             AddAdobeFontMetrics("Times,Bold", "Times-Bold");
             AddAdobeFontMetrics("Times,BoldItalic", "Times-BoldItalic");
+
+            // Additional names for Arial
+            AddAdobeFontMetrics("ArialMT", "Helvetica");
+            AddAdobeFontMetrics("Arial-ItalicMT", "Helvetica-Oblique");
+            AddAdobeFontMetrics("Arial-BoldMT", "Helvetica-Bold");
+            AddAdobeFontMetrics("Arial-BoldMT,Bold", "Helvetica-Bold");
+            AddAdobeFontMetrics("Arial-BoldItalicMT", "Helvetica-BoldOblique");
         }
 
         private static void AddAdobeFontMetrics(string fontName, Standard14Font? type = null)
@@ -88,9 +95,14 @@
             Standard14Names.Add(fontName);
             Standard14Mapping.Add(fontName, afmName);
 
-            if (Standard14AfmMap.TryGetValue(afmName, out var metrics))
+            if (type.HasValue)
             {
-                Standard14AfmMap[fontName] = metrics;
+                BuilderTypesToNames[type.Value] = afmName;
+            }
+
+            if (Standard14Cache.TryGetValue(afmName, out var metrics))
+            {
+                Standard14Cache[fontName] = metrics;
             }
 
             try
@@ -112,11 +124,7 @@
                     bytes = new ByteArrayInputBytes(memory.ToArray());
                 }
 
-                Standard14AfmMap[fontName] = AdobeFontMetricsParser.Parse(bytes, true);
-                if (type.HasValue)
-                {
-                    Standard14AfmTypeMap[type.Value] = Standard14AfmMap[fontName];
-                }
+                Standard14Cache[fontName] = AdobeFontMetricsParser.Parse(bytes, true);
             }
             catch (Exception ex)
             {
@@ -130,7 +138,7 @@
         /// </summary>
         public static AdobeFontMetrics GetAdobeFontMetrics(string baseName)
         {
-            Standard14AfmMap.TryGetValue(baseName, out var metrics);
+            Standard14Cache.TryGetValue(baseName, out var metrics);
 
             return metrics;
         }
@@ -140,9 +148,9 @@
         /// </summary>
         public static AdobeFontMetrics GetAdobeFontMetrics(Standard14Font fontType)
         {
-            return Standard14AfmTypeMap[fontType];
+            return Standard14Cache[BuilderTypesToNames[fontType]];
         }
-        
+
         /// <summary>
         /// Determines if a font with this name is a standard 14 font.
         /// </summary>
@@ -158,7 +166,7 @@
         {
             return new HashSet<string>(Standard14Names);
         }
-        
+
         /// <summary>
         /// Get the official Standard 14 name of the actual font which the given font name maps to.
         /// </summary>

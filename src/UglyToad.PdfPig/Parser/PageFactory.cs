@@ -8,6 +8,7 @@
     using Filters;
     using Geometry;
     using Graphics;
+    using Graphics.Operations;
     using Logging;
     using Parts;
     using Tokenization.Scanner;
@@ -18,11 +19,11 @@
     {
         private readonly IPdfTokenScanner pdfScanner;
         private readonly IResourceStore resourceStore;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly IPageContentParser pageContentParser;
         private readonly ILog log;
 
-        public PageFactory(IPdfTokenScanner pdfScanner, IResourceStore resourceStore, IFilterProvider filterProvider,
+        public PageFactory(IPdfTokenScanner pdfScanner, IResourceStore resourceStore, ILookupFilterProvider filterProvider,
             IPageContentParser pageContentParser,
             ILog log)
         {
@@ -33,8 +34,7 @@
             this.pdfScanner = pdfScanner;
         }
 
-        public Page Create(int number, DictionaryToken dictionary, PageTreeMembers pageTreeMembers,
-            bool isLenientParsing)
+        public Page Create(int number, DictionaryToken dictionary, PageTreeMembers pageTreeMembers, bool clipPaths)
         {
             if (dictionary == null)
             {
@@ -43,10 +43,13 @@
 
             var type = dictionary.GetNameOrDefault(NameToken.Type);
 
-            if (type != null && !type.Equals(NameToken.Page) && !isLenientParsing)
+            if (type != null && !type.Equals(NameToken.Page))
             {
-                throw new InvalidOperationException($"Page {number} had its type specified as {type} rather than 'Page'.");
+                log?.Error($"Page {number} had its type specified as {type} rather than 'Page'.");
             }
+
+            MediaBox mediaBox = GetMediaBox(number, dictionary, pageTreeMembers);
+            CropBox cropBox = GetCropBox(dictionary, pageTreeMembers, mediaBox);
 
             var rotation = new PageRotationDegrees(pageTreeMembers.Rotation);
             if (dictionary.TryGet(NameToken.Rotate, pdfScanner, out NumericToken rotateToken))
@@ -54,31 +57,49 @@
                 rotation = new PageRotationDegrees(rotateToken.Int);
             }
 
-            MediaBox mediaBox = GetMediaBox(number, dictionary, pageTreeMembers);
-            CropBox cropBox = GetCropBox(dictionary, pageTreeMembers, mediaBox);
-
             var stackDepth = 0;
 
             while (pageTreeMembers.ParentResources.Count > 0)
             {
                 var resource = pageTreeMembers.ParentResources.Dequeue();
 
-                resourceStore.LoadResourceDictionary(resource, isLenientParsing);
+                resourceStore.LoadResourceDictionary(resource);
                 stackDepth++;
             }
 
             if (dictionary.TryGet(NameToken.Resources, pdfScanner, out DictionaryToken resources))
             {
-                resourceStore.LoadResourceDictionary(resources, isLenientParsing);
+                resourceStore.LoadResourceDictionary(resources);
                 stackDepth++;
+            }
+
+            // Apply rotation.
+            if (rotation.SwapsAxis)
+            {
+                mediaBox = new MediaBox(new PdfRectangle(mediaBox.Bounds.Bottom, 
+                    mediaBox.Bounds.Left, 
+                    mediaBox.Bounds.Top,
+                    mediaBox.Bounds.Right));
+                cropBox = new CropBox(new PdfRectangle(cropBox.Bounds.Bottom,
+                    cropBox.Bounds.Left,
+                    cropBox.Bounds.Top,
+                    cropBox.Bounds.Right));
             }
             
             UserSpaceUnit userSpaceUnit = GetUserSpaceUnits(dictionary);
 
-            PageContent content = default(PageContent);
+            PageContent content;
 
             if (!dictionary.TryGet(NameToken.Contents, out var contents))
             {
+                content = new PageContent(EmptyArray<IGraphicsStateOperation>.Instance,
+                    EmptyArray<Letter>.Instance,
+                    EmptyArray<PdfPath>.Instance,
+                    EmptyArray<Union<XObjectContentRecord, InlineImage>>.Instance,
+                    EmptyArray<MarkedContentElement>.Instance,
+                    pdfScanner,
+                    filterProvider,
+                    resourceStore);
                  // ignored for now, is it possible? check the spec...
             }
             else if (DirectObjectFinder.TryGet<ArrayToken>(contents, pdfScanner, out var array))
@@ -101,15 +122,15 @@
                         throw new InvalidOperationException($"Could not find the contents for object {obj}.");
                     }
 
-                    bytes.AddRange(contentStream.Decode(filterProvider));
+                    bytes.AddRange(contentStream.Decode(filterProvider, pdfScanner));
 
                     if (i < array.Data.Count - 1)
                     {
                         bytes.Add((byte)'\n');
                     }
                 }
-                
-                content = GetContent(number, bytes, cropBox, userSpaceUnit, rotation, isLenientParsing);
+
+                content = GetContent(number, bytes, cropBox, userSpaceUnit, rotation, clipPaths, mediaBox);
             }
             else
             {
@@ -120,13 +141,13 @@
                     throw new InvalidOperationException("Failed to parse the content for the page: " + number);
                 }
 
-                var bytes = contentStream.Decode(filterProvider);
+                var bytes = contentStream.Decode(filterProvider, pdfScanner);
 
-                content = GetContent(number, bytes, cropBox, userSpaceUnit, rotation, isLenientParsing);
+                content = GetContent(number, bytes, cropBox, userSpaceUnit, rotation, clipPaths, mediaBox);
             }
 
             var page = new Page(number, dictionary, mediaBox, cropBox, rotation, content, 
-                new AnnotationProvider(pdfScanner, dictionary, isLenientParsing),
+                new AnnotationProvider(pdfScanner, dictionary),
                 pdfScanner);
 
             for (var i = 0; i < stackDepth; i++)
@@ -138,15 +159,17 @@
         }
 
         private PageContent GetContent(int pageNumber, IReadOnlyList<byte> contentBytes, CropBox cropBox, UserSpaceUnit userSpaceUnit,
-            PageRotationDegrees rotation,
-            bool isLenientParsing)
+            PageRotationDegrees rotation, bool clipPaths, MediaBox mediaBox)
         {
-            var operations = pageContentParser.Parse(pageNumber, new ByteArrayInputBytes(contentBytes));
-
-            var context = new ContentStreamProcessor(cropBox.Bounds, resourceStore, userSpaceUnit, rotation, isLenientParsing, pdfScanner, 
-                pageContentParser,
-                filterProvider, 
+            var operations = pageContentParser.Parse(pageNumber, new ByteArrayInputBytes(contentBytes),
                 log);
+
+            var context = new ContentStreamProcessor(cropBox.Bounds, resourceStore, userSpaceUnit, rotation, pdfScanner,
+                pageContentParser,
+                filterProvider,
+                log,
+                clipPaths,
+                new PdfVector(mediaBox.Bounds.Width, mediaBox.Bounds.Height));
 
             return context.Process(pageNumber, operations);
         }

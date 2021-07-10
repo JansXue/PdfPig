@@ -25,15 +25,15 @@
     {
         private bool isDisposed;
         private readonly Lazy<AcroForm> documentForm;
-
-        private readonly bool isLenientParsing;
-
+        
         [NotNull]
         private readonly HeaderVersion version;
         
         private readonly ILog log;
 
         private readonly IInputBytes inputBytes;
+
+        private readonly bool clipPaths;
 
         [NotNull]
         private readonly ParsingCachingProviders cachingProviders;
@@ -44,7 +44,7 @@
         [NotNull]
         private readonly IPdfTokenScanner pdfScanner;
 
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly BookmarksProvider bookmarksProvider;
 
         [NotNull]
@@ -86,30 +86,30 @@
             IInputBytes inputBytes,
             HeaderVersion version, 
             CrossReferenceTable crossReferenceTable,
-            bool isLenientParsing,
             ParsingCachingProviders cachingProviders,
             IPageFactory pageFactory,
             Catalog catalog,
             DocumentInformation information, 
             EncryptionDictionary encryptionDictionary,
             IPdfTokenScanner pdfScanner,
-            IFilterProvider filterProvider,
+            ILookupFilterProvider filterProvider,
             AcroFormFactory acroFormFactory,
-            BookmarksProvider bookmarksProvider)
+            BookmarksProvider bookmarksProvider,
+            bool clipPaths)
         {
             this.log = log;
             this.inputBytes = inputBytes;
             this.version = version ?? throw new ArgumentNullException(nameof(version));
-            this.isLenientParsing = isLenientParsing;
             this.cachingProviders = cachingProviders ?? throw new ArgumentNullException(nameof(cachingProviders));
             this.encryptionDictionary = encryptionDictionary;
             this.pdfScanner = pdfScanner ?? throw new ArgumentNullException(nameof(pdfScanner));
             this.filterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
             this.bookmarksProvider = bookmarksProvider ?? throw new ArgumentNullException(nameof(bookmarksProvider));
+            this.clipPaths = clipPaths;
             Information = information ?? throw new ArgumentNullException(nameof(information));
-            pages = new Pages(catalog, pageFactory, isLenientParsing, pdfScanner);
+            pages = new Pages(catalog, pageFactory, pdfScanner);
             Structure = new Structure(catalog, crossReferenceTable, pdfScanner);
-            Advanced = new AdvancedPdfDocumentAccess(pdfScanner, filterProvider, catalog, isLenientParsing);
+            Advanced = new AdvancedPdfDocumentAccess(pdfScanner, filterProvider, catalog);
             documentForm = new Lazy<AcroForm>(() => acroFormFactory.GetAcroForm(catalog));
         }
 
@@ -157,7 +157,7 @@
 
             try
             {
-                return pages.GetPage(pageNumber);
+                return pages.GetPage(pageNumber, clipPaths);
             }
             catch (Exception ex)
             {
@@ -202,7 +202,7 @@
                 return false;
             }
 
-            metadata = new XmpMetadata(xmpStreamToken, filterProvider);
+            metadata = new XmpMetadata(xmpStreamToken, filterProvider, pdfScanner);
 
             return true;
         }
@@ -219,7 +219,11 @@
             }
 
             bookmarks = bookmarksProvider.GetBookmarks(Structure.Catalog);
-            if (bookmarks != null) return true;
+            if (bookmarks != null)
+            {
+                return true;
+            }
+
             return false;
         }
 

@@ -1,9 +1,5 @@
 ﻿namespace UglyToad.PdfPig.Graphics
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Diagnostics;
-    using System.Linq;
     using Colors;
     using Content;
     using Core;
@@ -14,9 +10,15 @@
     using Parser;
     using PdfFonts;
     using PdfPig.Core;
+    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.Linq;
     using Tokenization.Scanner;
     using Tokens;
+    using Operations.TextPositioning;
     using XObjects;
+    using static PdfPig.Core.PdfSubpath;
 
     internal class ContentStreamProcessor : IOperationContext
     {
@@ -43,17 +45,17 @@
         private readonly IResourceStore resourceStore;
         private readonly UserSpaceUnit userSpaceUnit;
         private readonly PageRotationDegrees rotation;
-        private readonly bool isLenientParsing;
         private readonly IPdfTokenScanner pdfScanner;
         private readonly IPageContentParser pageContentParser;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly ILog log;
+        private readonly bool clipPaths;
+        private readonly PdfVector pageSize;
         private readonly MarkedContentStack markedContentStack = new MarkedContentStack();
 
         private Stack<CurrentGraphicsState> graphicsStack = new Stack<CurrentGraphicsState>();
         private IFont activeExtendedGraphicsStateFont;
         private InlineImageBuilder inlineImageBuilder;
-        private bool currentPathAdded;
         private int pageNumber;
 
         /// <summary>
@@ -66,6 +68,8 @@
         public TextMatrices TextMatrices { get; } = new TextMatrices();
 
         public TransformationMatrix CurrentTransformationMatrix => GetCurrentState().CurrentTransformationMatrix;
+
+        public PdfSubpath CurrentSubpath { get; private set; }
 
         public PdfPath CurrentPath { get; private set; }
 
@@ -82,22 +86,96 @@
         };
 
         public ContentStreamProcessor(PdfRectangle cropBox, IResourceStore resourceStore, UserSpaceUnit userSpaceUnit, PageRotationDegrees rotation,
-            bool isLenientParsing,
             IPdfTokenScanner pdfScanner,
             IPageContentParser pageContentParser,
-            IFilterProvider filterProvider,
-            ILog log)
+            ILookupFilterProvider filterProvider,
+            ILog log,
+            bool clipPaths,
+            PdfVector pageSize)
         {
             this.resourceStore = resourceStore;
             this.userSpaceUnit = userSpaceUnit;
             this.rotation = rotation;
-            this.isLenientParsing = isLenientParsing;
             this.pdfScanner = pdfScanner ?? throw new ArgumentNullException(nameof(pdfScanner));
             this.pageContentParser = pageContentParser ?? throw new ArgumentNullException(nameof(pageContentParser));
             this.filterProvider = filterProvider ?? throw new ArgumentNullException(nameof(filterProvider));
             this.log = log;
-            graphicsStack.Push(new CurrentGraphicsState());
+            this.clipPaths = clipPaths;
+            this.pageSize = pageSize;
+
+            // initiate CurrentClippingPath to cropBox
+            var clippingSubpath = new PdfSubpath();
+            clippingSubpath.Rectangle(cropBox.BottomLeft.X, cropBox.BottomLeft.Y, cropBox.Width, cropBox.Height);
+            var clippingPath = new PdfPath() { clippingSubpath };
+            clippingPath.SetClipping(FillingRule.EvenOdd);
+
+            graphicsStack.Push(new CurrentGraphicsState()
+            {
+                CurrentTransformationMatrix = GetInitialMatrix(),
+                CurrentClippingPath = clippingPath
+            });
+
             ColorSpaceContext = new ColorSpaceContext(GetCurrentState, resourceStore);
+        }
+
+        [System.Diagnostics.Contracts.Pure]
+        private TransformationMatrix GetInitialMatrix()
+        {
+            // TODO: this is a bit of a hack because I don't understand matrices
+            // TODO: use MediaBox (i.e. pageSize) or CropBox?
+
+            /* 
+             * There should be a single Affine Transform we can apply to any point resulting
+             * from a content stream operation which will rotate the point and translate it back to
+             * a point where the origin is in the page's lower left corner.
+             *
+             * For example this matrix represents a (clockwise) rotation and translation:
+             * [  cos  sin  tx ]
+             * [ -sin  cos  ty ]
+             * [    0    0   1 ]
+             * Warning: rotation is counter-clockwise here
+             * 
+             * The values of tx and ty are those required to move the origin back to the expected origin (lower-left).
+             * The corresponding values should be:
+             * Rotation:  0   90  180  270
+             *       tx:  0    0    w    w
+             *       ty:  0    h    h    0
+             *
+             * Where w and h are the page width and height after rotation.
+            */
+
+            double cos, sin;
+            double dx = 0, dy = 0;
+            switch (rotation.Value)
+            {
+                case 0:
+                    cos = 1;
+                    sin = 0;
+                    break;
+                case 90:
+                    cos = 0;
+                    sin = 1;
+                    dy = pageSize.Y;
+                    break;
+                case 180:
+                    cos = -1;
+                    sin = 0;
+                    dx = pageSize.X;
+                    dy = pageSize.Y;
+                    break;
+                case 270:
+                    cos = 0;
+                    sin = -1;
+                    dx = pageSize.X;
+                    break;
+                default:
+                    throw new InvalidOperationException($"Invalid value for page rotation: {rotation.Value}.");
+            }
+
+            return new TransformationMatrix(
+                cos, -sin, 0,
+                sin, cos, 0,
+                dx, dy, 1);
         }
 
         public PageContent Process(int pageNumberCurrent, IReadOnlyList<IGraphicsStateOperation> operations)
@@ -164,14 +242,7 @@
             var renderingMatrix =
                 TransformationMatrix.FromValues(fontSize * horizontalScaling, 0, 0, fontSize, 0, rise);
 
-            // TODO: this does not seem correct, produces the correct result for now but we need to revisit.
-            // see: https://stackoverflow.com/questions/48010235/pdf-specification-get-font-size-in-points
-            var pointSize = Math.Round(rotation.Rotate(transformationMatrix).Multiply(TextMatrices.TextMatrix).Multiply(fontSize).A, 2);
-
-            if (pointSize < 0)
-            {
-                pointSize *= -1;
-            }
+            var pointSize = Math.Round(transformationMatrix.Multiply(TextMatrices.TextMatrix).Transform(new PdfRectangle(0, 0, 1, fontSize)).Height, 2);
 
             while (bytes.MoveNext())
             {
@@ -208,15 +279,11 @@
 
                 var boundingBox = font.GetBoundingBox(code);
 
-                var transformedGlyphBounds = rotation.Rotate(transformationMatrix)
-                    .Transform(textMatrix
-                        .Transform(renderingMatrix
-                            .Transform(boundingBox.GlyphBounds)));
+                var transformedGlyphBounds = PerformantRectangleTransformer
+                      .Transform(renderingMatrix, textMatrix, transformationMatrix, boundingBox.GlyphBounds);
 
-                var transformedPdfBounds = rotation.Rotate(transformationMatrix)
-                    .Transform(textMatrix
-                        .Transform(renderingMatrix
-                            .Transform(new PdfRectangle(0, 0, boundingBox.Width, 0))));
+                var transformedPdfBounds = PerformantRectangleTransformer
+                    .Transform(renderingMatrix, textMatrix, transformationMatrix, new PdfRectangle(0, 0, boundingBox.Width, 0));
 
                 // If the text rendering mode calls for filling, the current nonstroking color in the graphics state is used; 
                 // if it calls for stroking, the current stroking color is used.
@@ -231,7 +298,7 @@
                     transformedPdfBounds.BottomRight,
                     transformedPdfBounds.Width,
                     fontSize,
-                    font.Name.Data,
+                    font.Details,
                     color,
                     pointSize,
                     textSequence);
@@ -362,7 +429,7 @@
             var hasResources = formStream.StreamDictionary.TryGet<DictionaryToken>(NameToken.Resources, pdfScanner, out var formResources);
             if (hasResources)
             {
-                resourceStore.LoadResourceDictionary(formResources, isLenientParsing);
+                resourceStore.LoadResourceDictionary(formResources);
             }
 
             // 1. Save current state.
@@ -373,17 +440,17 @@
             var formMatrix = TransformationMatrix.Identity;
             if (formStream.StreamDictionary.TryGet<ArrayToken>(NameToken.Matrix, pdfScanner, out var formMatrixToken))
             {
-                formMatrix = TransformationMatrix.FromArray(formMatrixToken.Data.OfType<NumericToken>().Select(x => (double)x.Data).ToArray());
+                formMatrix = TransformationMatrix.FromArray(formMatrixToken.Data.OfType<NumericToken>().Select(x => x.Double).ToArray());
             }
 
             // 2. Update current transformation matrix.
-            var resultingTransformationMatrix = startState.CurrentTransformationMatrix.Multiply(formMatrix);
+            var resultingTransformationMatrix = formMatrix.Multiply(startState.CurrentTransformationMatrix);
 
             startState.CurrentTransformationMatrix = resultingTransformationMatrix;
 
-            var contentStream = formStream.Decode(filterProvider);
+            var contentStream = formStream.Decode(filterProvider, pdfScanner);
 
-            var operations = pageContentParser.Parse(pageNumber, new ByteArrayInputBytes(contentStream));
+            var operations = pageContentParser.Parse(pageNumber, new ByteArrayInputBytes(contentStream), log);
 
             // 3. We don't respect clipping currently.
 
@@ -401,51 +468,254 @@
 
         public void BeginSubpath()
         {
-            if (CurrentPath != null && CurrentPath.Commands.Count > 0 && !currentPathAdded)
+            if (CurrentPath == null)
             {
-                paths.Add(CurrentPath);
-                markedContentStack.AddPath(CurrentPath);
+                CurrentPath = new PdfPath();
             }
 
-            CurrentPath = new PdfPath();
-            currentPathAdded = false;
+            AddCurrentSubpath();
+            CurrentSubpath = new PdfSubpath();
+        }
+
+        public PdfPoint? CloseSubpath()
+        {
+            if (CurrentSubpath == null)
+            {
+                return null;
+            }
+
+            PdfPoint point;
+            if (CurrentSubpath.Commands[0] is Move move)
+            {
+                point = move.Location;
+            }
+            else
+            {
+                throw new ArgumentException("CloseSubpath(): first command not Move.");
+            }
+
+            CurrentSubpath.CloseSubpath();
+            AddCurrentSubpath();
+            return point;
+        }
+
+        public void AddCurrentSubpath()
+        {
+            if (CurrentSubpath == null)
+            {
+                return;
+            }
+
+            CurrentPath.Add(CurrentSubpath);
+            CurrentSubpath = null;
         }
 
         public void StrokePath(bool close)
         {
+            if (CurrentPath == null)
+            {
+                return;
+            }
+
+            CurrentPath.SetStroked();
+
             if (close)
             {
-                ClosePath();
+                CurrentSubpath?.CloseSubpath();
             }
-            else
-            {
-                paths.Add(CurrentPath);
-                markedContentStack.AddPath(CurrentPath);
-                currentPathAdded = true;
-            }
+
+            ClosePath();
         }
 
-        public void FillPath(bool close)
+        public void FillPath(FillingRule fillingRule, bool close)
         {
+            if (CurrentPath == null)
+            {
+                return;
+            }
+
+            CurrentPath.SetFilled(fillingRule);
+
             if (close)
             {
-                ClosePath();
+                CurrentSubpath?.CloseSubpath();
             }
-            else
+
+            ClosePath();
+        }
+
+        public void FillStrokePath(FillingRule fillingRule, bool close)
+        {
+            if (CurrentPath == null)
             {
-                paths.Add(CurrentPath);
-                markedContentStack.AddPath(CurrentPath);
-                currentPathAdded = true;
+                return;
             }
+
+            CurrentPath.SetFilled(fillingRule);
+            CurrentPath.SetStroked();
+
+            if (close)
+            {
+                CurrentSubpath?.CloseSubpath();
+            }
+
+            ClosePath();
+        }
+
+        public void MoveTo(double x, double y)
+        {
+            BeginSubpath();
+            var point = CurrentTransformationMatrix.Transform(new PdfPoint(x, y));
+            CurrentPosition = point;
+            CurrentSubpath.MoveTo(point.X, point.Y);
+        }
+
+        public void BezierCurveTo(double x2, double y2, double x3, double y3)
+        {
+            if (CurrentSubpath == null)
+            {
+                return;
+            }
+
+            var controlPoint2 = CurrentTransformationMatrix.Transform(new PdfPoint(x2, y2));
+            var end = CurrentTransformationMatrix.Transform(new PdfPoint(x3, y3));
+
+            CurrentSubpath.BezierCurveTo(CurrentPosition.X, CurrentPosition.Y, controlPoint2.X, controlPoint2.Y, end.X, end.Y);
+            CurrentPosition = end;
+        }
+
+        public void BezierCurveTo(double x1, double y1, double x2, double y2, double x3, double y3)
+        {
+            if (CurrentSubpath == null)
+            {
+                return;
+            }
+
+            var controlPoint1 = CurrentTransformationMatrix.Transform(new PdfPoint(x1, y1));
+            var controlPoint2 = CurrentTransformationMatrix.Transform(new PdfPoint(x2, y2));
+            var end = CurrentTransformationMatrix.Transform(new PdfPoint(x3, y3));
+
+            CurrentSubpath.BezierCurveTo(controlPoint1.X, controlPoint1.Y, controlPoint2.X, controlPoint2.Y, end.X, end.Y);
+            CurrentPosition = end;
+        }
+
+        public void LineTo(double x, double y)
+        {
+            if (CurrentSubpath == null)
+            {
+                return;
+            }
+
+            var endPoint = CurrentTransformationMatrix.Transform(new PdfPoint(x, y));
+
+            CurrentSubpath.LineTo(endPoint.X, endPoint.Y);
+            CurrentPosition = endPoint;
+        }
+
+        public void Rectangle(double x, double y, double width, double height)
+        {
+            BeginSubpath();
+            var lowerLeft = CurrentTransformationMatrix.Transform(new PdfPoint(x, y));
+            var upperRight = CurrentTransformationMatrix.Transform(new PdfPoint(x + width, y + height));
+
+            CurrentSubpath.Rectangle(lowerLeft.X, lowerLeft.Y, upperRight.X - lowerLeft.X, upperRight.Y - lowerLeft.Y);
+            AddCurrentSubpath();
+        }
+
+        public void EndPath()
+        {
+            if (CurrentPath == null)
+            {
+                return;
+            }
+
+            AddCurrentSubpath();
+
+            if (CurrentPath.IsClipping)
+            {
+                if (!clipPaths)
+                {
+                    // if we don't clip paths, add clipping path to paths
+                    paths.Add(CurrentPath);
+                    markedContentStack.AddPath(CurrentPath);
+                }
+                CurrentPath = null;
+                return;
+            }
+
+            paths.Add(CurrentPath);
+            markedContentStack.AddPath(CurrentPath);
+            CurrentPath = null;
         }
 
         public void ClosePath()
         {
-            CurrentPath.ClosePath();
-            paths.Add(CurrentPath);
-            markedContentStack.AddPath(CurrentPath);
+            AddCurrentSubpath();
+
+            if (CurrentPath.IsClipping)
+            {
+                EndPath();
+                return;
+            }
+
+            var currentState = GetCurrentState();
+            if (CurrentPath.IsStroked)
+            {
+                CurrentPath.LineDashPattern = currentState.LineDashPattern;
+                CurrentPath.StrokeColor = currentState.CurrentStrokingColor;
+                CurrentPath.LineWidth = currentState.LineWidth;
+                CurrentPath.LineCapStyle = currentState.CapStyle;
+                CurrentPath.LineJoinStyle = currentState.JoinStyle;
+            }
+
+            if (CurrentPath.IsFilled)
+            {
+                CurrentPath.FillColor = currentState.CurrentNonStrokingColor;
+            }
+
+            if (clipPaths)
+            {
+                var clippedPath = currentState.CurrentClippingPath.Clip(CurrentPath, log);
+                if (clippedPath != null)
+                {
+                    paths.Add(clippedPath);
+                    markedContentStack.AddPath(clippedPath);
+                }
+            }
+            else
+            {
+                paths.Add(CurrentPath);
+                markedContentStack.AddPath(CurrentPath);
+            }
+
             CurrentPath = null;
-            currentPathAdded = false;
+        }
+
+        public void ModifyClippingIntersect(FillingRule clippingRule)
+        {
+            if (CurrentPath == null)
+            {
+                return;
+            }
+
+            AddCurrentSubpath();
+            CurrentPath.SetClipping(clippingRule);
+
+            if (clipPaths)
+            {
+                var currentClipping = GetCurrentState().CurrentClippingPath;
+                currentClipping.SetClipping(clippingRule);
+
+                var newClippings = CurrentPath.Clip(currentClipping, log);
+                if (newClippings == null)
+                {
+                    log.Warn("Empty clipping path found. Clipping path not updated.");
+                }
+                else
+                {
+                    GetCurrentState().CurrentClippingPath = newClippings;
+                }
+            }
         }
 
         public void SetNamedGraphicsState(NameToken stateName)
@@ -474,15 +744,15 @@
             {
                 currentGraphicsState.FontState.FromExtendedGraphicsState = true;
                 currentGraphicsState.FontState.FontSize = (double)sizeToken.Data;
-                activeExtendedGraphicsStateFont = resourceStore.GetFontDirectly(fontReference, isLenientParsing);
+                activeExtendedGraphicsStateFont = resourceStore.GetFontDirectly(fontReference);
             }
         }
 
         public void BeginInlineImage()
         {
-            if (inlineImageBuilder != null && !isLenientParsing)
+            if (inlineImageBuilder != null)
             {
-                throw new PdfDocumentFormatException("Begin inline image (BI) command encountered while another inline image was active.");
+                log?.Error("Begin inline image (BI) command encountered while another inline image was active.");
             }
 
             inlineImageBuilder = new InlineImageBuilder();
@@ -492,12 +762,8 @@
         {
             if (inlineImageBuilder == null)
             {
-                if (isLenientParsing)
-                {
-                    return;
-                }
-
-                throw new PdfDocumentFormatException("Begin inline image data (ID) command encountered without a corresponding begin inline image (BI) command.");
+                log?.Error("Begin inline image data (ID) command encountered without a corresponding begin inline image (BI) command.");
+                return;
             }
 
             inlineImageBuilder.Properties = properties;
@@ -507,12 +773,8 @@
         {
             if (inlineImageBuilder == null)
             {
-                if (isLenientParsing)
-                {
-                    return;
-                }
-
-                throw new PdfDocumentFormatException("End inline image (EI) command encountered without a corresponding begin inline image (BI) command.");
+                log?.Error("End inline image (EI) command encountered without a corresponding begin inline image (BI) command.");
+                return;
             }
 
             inlineImageBuilder.Bytes = bytes;
@@ -542,7 +804,11 @@
         {
             if (markedContentStack.CanPop)
             {
-                markedContents.Add(markedContentStack.Pop(pdfScanner));
+                var mc = markedContentStack.Pop(pdfScanner);
+                if (mc != null)
+                {
+                    markedContents.Add(mc);
+                }
             }
         }
 
@@ -550,9 +816,86 @@
         {
             var matrix = TransformationMatrix.GetTranslationMatrix(tx, ty);
 
-            var newMatrix = matrix.Multiply(TextMatrices.TextMatrix);
+            TextMatrices.TextMatrix = matrix.Multiply(TextMatrices.TextMatrix);
+        }
 
-            TextMatrices.TextMatrix = newMatrix;
+        public void SetFlatnessTolerance(decimal tolerance)
+        {
+            GetCurrentState().Flatness = tolerance;
+        }
+
+        public void SetLineCap(LineCapStyle cap)
+        {
+            GetCurrentState().CapStyle = cap;
+        }
+
+        public void SetLineDashPattern(LineDashPattern pattern)
+        {
+            GetCurrentState().LineDashPattern = pattern;
+        }
+
+        public void SetLineJoin(LineJoinStyle join)
+        {
+            GetCurrentState().JoinStyle = join;
+        }
+
+        public void SetLineWidth(decimal width)
+        {
+            GetCurrentState().LineWidth = width;
+        }
+
+        public void SetMiterLimit(decimal limit)
+        {
+            GetCurrentState().MiterLimit = limit;
+        }
+
+        public void MoveToNextLineWithOffset()
+        {
+            var tdOperation = new MoveToNextLineWithOffset(0, -1 * (decimal)GetCurrentState().FontState.Leading);
+            tdOperation.Run(this);
+        }
+
+        public void SetFontAndSize(NameToken font, double size)
+        {
+            var currentState = GetCurrentState();
+            currentState.FontState.FontSize = size;
+            currentState.FontState.FontName = font;
+        }
+
+        public void SetHorizontalScaling(double scale)
+        {
+            GetCurrentState().FontState.HorizontalScaling = scale;
+        }
+
+        public void SetTextLeading(double leading)
+        {
+            GetCurrentState().FontState.Leading = leading;
+        }
+
+        public void SetTextRenderingMode(TextRenderingMode mode)
+        {
+            GetCurrentState().FontState.TextRenderingMode = mode;
+        }
+
+        public void SetTextRise(double rise)
+        {
+            GetCurrentState().FontState.Rise = rise;
+        }
+
+        public void SetWordSpacing(double spacing)
+        {
+            GetCurrentState().FontState.WordSpacing = spacing;
+        }
+
+        public void ModifyCurrentTransformationMatrix(double[] value)
+        {
+            var ctm = GetCurrentState().CurrentTransformationMatrix;
+            GetCurrentState().CurrentTransformationMatrix = TransformationMatrix.FromArray(value).Multiply(ctm);
+        }
+
+        public void SetCharacterSpacing(double spacing)
+        {
+            GetCurrentState().FontState.CharacterSpacing = spacing;
         }
     }
 }

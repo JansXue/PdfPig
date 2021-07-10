@@ -22,6 +22,22 @@
         }
 
         /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            if (ReferenceEquals(this, obj))
+            {
+                return true;
+            }
+
+            if (!(obj is IndirectReferenceToken other))
+            {
+                return false;
+            }
+
+            return Data.Equals(other.Data);
+        }
+
+        /// <inheritdoc />
         public override string ToString()
         {
             return $"{Data}";

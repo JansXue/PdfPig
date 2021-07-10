@@ -3,6 +3,7 @@
     using System;
     using System.Drawing;
     using System.IO;
+    using PdfPig.Core;
     using Xunit;
 
     public class GenerateLetterBoundingBoxImages
@@ -15,7 +16,10 @@
         private const string SingleInkscapePage = "Single Page Simple - from inkscape";
         private const string MotorInsuranceClaim = "Motor Insurance claim form";
         private const string PigProduction = "Pig Production Handbook";
-
+        private const string SinglePage90ClockwiseRotation = "SinglePage90ClockwiseRotation - from PdfPig";
+        private const string SinglePage180ClockwiseRotation = "SinglePage180ClockwiseRotation - from PdfPig";
+        private const string SinglePage270ClockwiseRotation = "SinglePage270ClockwiseRotation - from PdfPig";
+        
         private static string GetFilename(string name)
         {
             var documentFolder = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Integration", "Documents"));
@@ -94,6 +98,24 @@
             Run(ByzantineGenerals, 702);
         }
 
+        [Fact]
+        public void SinglePage90ClockwiseRotationFromPdfPig()
+        {
+            Run(SinglePage90ClockwiseRotation, 595);
+        }
+
+        [Fact]
+        public void SinglePage180ClockwiseRotationFromPdfPig()
+        {
+            Run(SinglePage180ClockwiseRotation, 842);
+        }
+
+        [Fact]
+        public void SinglePage270ClockwiseRotationFromPdfPig()
+        {
+            Run(SinglePage270ClockwiseRotation, 595);
+        }
+
         private static void Run(string file, int imageHeight = 792)
         {
             var pdfFileName = GetFilename(file);
@@ -104,21 +126,19 @@
                 var page = document.GetPage(1);
 
                 var violetPen = new Pen(Color.BlueViolet, 1);
-                var greenPen = new Pen(Color.GreenYellow, 1);
+                var redPen = new Pen(Color.Crimson, 1);
 
                 using (var bitmap = new Bitmap(image))
                 using (var graphics = Graphics.FromImage(bitmap))
                 {
                     foreach (var word in page.GetWords())
                     {
-                        graphics.DrawRectangle(greenPen, new Rectangle((int)word.BoundingBox.Left,
-                            imageHeight - (int)word.BoundingBox.Top, (int)word.BoundingBox.Width, (int)word.BoundingBox.Height));
+                        DrawRectangle(word.BoundingBox, graphics, redPen, imageHeight);
                     }
 
                     foreach (var letter in page.Letters)
                     {
-                        graphics.DrawRectangle(violetPen, new Rectangle((int)letter.GlyphRectangle.Left,
-                            imageHeight - (int)(letter.GlyphRectangle.Bottom + letter.GlyphRectangle.Height), (int)Math.Max(1, letter.GlyphRectangle.Width), (int)letter.GlyphRectangle.Height));
+                        DrawRectangle(letter.GlyphRectangle, graphics, violetPen, imageHeight);
                     }
 
                     var imageName = $"{file}.jpg";
@@ -133,6 +153,25 @@
                     bitmap.Save(savePath);
                 }
             }
+        }
+
+        private static void DrawRectangle(PdfRectangle rectangle, Graphics graphics, Pen pen,
+            int imageHeight)
+        {
+            int GetY(PdfPoint p)
+            {
+                return imageHeight - (int) p.Y;
+            }
+
+            Point GetPoint(PdfPoint p)
+            {
+                return new Point((int)p.X, GetY(p));
+            }
+
+            graphics.DrawLine(pen, GetPoint(rectangle.BottomLeft), GetPoint(rectangle.BottomRight));
+            graphics.DrawLine(pen, GetPoint(rectangle.BottomRight), GetPoint(rectangle.TopRight));
+            graphics.DrawLine(pen, GetPoint(rectangle.TopRight), GetPoint(rectangle.TopLeft));
+            graphics.DrawLine(pen, GetPoint(rectangle.TopLeft), GetPoint(rectangle.BottomLeft));
         }
 
         private static Image GetCorrespondingImage(string filename)

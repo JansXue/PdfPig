@@ -8,7 +8,7 @@
     /// A dictionary object is an associative table containing pairs of objects, known as the dictionary's entries. 
     /// The key must be a <see cref="NameToken"/> and the value may be an kind of <see cref="IToken"/>.
     /// </summary>
-    public class DictionaryToken : IDataToken<IReadOnlyDictionary<string, IToken>>
+    public class DictionaryToken : IDataToken<IReadOnlyDictionary<string, IToken>>, IEquatable<DictionaryToken>
     {
         /// <summary>
         /// The key value pairs in this dictionary.
@@ -102,6 +102,16 @@
         /// <returns>A new <see cref="DictionaryToken"/> with the entry created or modified.</returns>
         public DictionaryToken With(string key, IToken value)
         {
+            if (key == null)
+            {
+                throw new ArgumentNullException(nameof(key));
+            }
+
+            if (value == null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
             var result = new Dictionary<string, IToken>(Data.Count + 1);
 
             foreach (var keyValuePair in Data)
@@ -114,10 +124,84 @@
             return new DictionaryToken(result);
         }
 
+        /// <summary>
+        /// Creates a copy of this dictionary with the entry with the specified key removed (if it exists).
+        /// </summary>
+        /// <param name="key">The key of the entry to remove.</param>
+        /// <returns>A new <see cref="DictionaryToken"/> with the entry removed.</returns>
+        public DictionaryToken Without(NameToken key) => Without(key.Data);
+
+        /// <summary>
+        /// Creates a copy of this dictionary with the entry with the specified key removed (if it exists).
+        /// </summary>
+        /// <param name="key">The key of the entry to remove.</param>
+        /// <returns>A new <see cref="DictionaryToken"/> with the entry removed.</returns>
+        public DictionaryToken Without(string key)
+        {
+            if (key == null)
+            {
+                throw new ArgumentNullException(nameof(key));
+            }
+
+            var result = new Dictionary<string, IToken>(Data.ContainsKey(key) ? Data.Count - 1 : Data.Count);
+
+            foreach (var keyValuePair in Data.Where(x => !x.Key.Equals(key)))
+            {
+                result[keyValuePair.Key] = keyValuePair.Value;
+            }
+
+            return new DictionaryToken(result);
+        }
+
+        /// <summary>
+        /// Create a new <see cref="DictionaryToken"/>.
+        /// </summary>
+        /// <param name="data">The data this dictionary will contain.</param>
+        public static DictionaryToken With(IReadOnlyDictionary<string, IToken> data)
+        {
+            return new DictionaryToken(data ?? throw new ArgumentNullException(nameof(data)));
+        }
+
+        /// <inheritdoc />
+        public bool Equals(IToken obj)
+        {
+            return Equals(obj as DictionaryToken);
+        }
+
+        /// <inheritdoc />
+        public bool Equals(DictionaryToken other)
+        {
+            if (other == null)
+            { 
+                return false;
+            }
+
+            if (ReferenceEquals(this, other))
+            {
+                return true;
+            }
+
+            if (Data.Count != other.Data.Count)
+            {
+                return false;
+            }
+
+            foreach (var kvp in other.Data)
+            {
+                if (!Data.TryGetValue(kvp.Key, out var val) || !val.Equals(kvp.Value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         /// <inheritdoc />
         public override string ToString()
         {
             return string.Join(", ", Data.Select(x => $"<{x.Key}, {x.Value}>"));
         }
+       
     }
 }

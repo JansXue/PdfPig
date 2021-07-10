@@ -1,8 +1,9 @@
 ﻿namespace UglyToad.PdfPig.Content
 {
-    using System.Collections.Generic;
     using Core;
+    using System.Collections.Generic;
     using Tokens;
+    using UglyToad.PdfPig.Graphics;
 
     /// <inheritdoc />
     /// <summary>

@@ -18,7 +18,7 @@
         private static readonly CodespaceRangeParser CodespaceRangeParser = new CodespaceRangeParser();
         private static readonly CidCharacterParser CidCharacterParser = new CidCharacterParser();
 
-        public CMap Parse(IInputBytes inputBytes, bool isLenientParsing)
+        public CMap Parse(IInputBytes inputBytes)
         {
             var scanner = new CoreTokenScanner(inputBytes);
 
@@ -35,10 +35,8 @@
                     {
                         case "usecmap":
                             {
-                                if (previousToken is NameToken name)
+                                if (previousToken is NameToken name && TryParseExternal(name.Data, out var external))
                                 {
-                                    var external = ParseExternal(name.Data);
-
                                     builder.UseCMap(external);
                                 }
                                 else
@@ -51,7 +49,7 @@
                             {
                                 if (previousToken is NumericToken numeric)
                                 {
-                                    CodespaceRangeParser.Parse(numeric, scanner, builder, isLenientParsing);
+                                    CodespaceRangeParser.Parse(numeric, scanner, builder);
                                 }
                                 else
                                 {
@@ -63,7 +61,7 @@
                             {
                                 if (previousToken is NumericToken numeric)
                                 {
-                                    BaseFontCharacterParser.Parse(numeric, scanner, builder, isLenientParsing);
+                                    BaseFontCharacterParser.Parse(numeric, scanner, builder);
                                 }
                                 else
                                 {
@@ -75,7 +73,7 @@
                             {
                                 if (previousToken is NumericToken numeric)
                                 {
-                                    BaseFontRangeParser.Parse(numeric, scanner, builder, isLenientParsing);
+                                    BaseFontRangeParser.Parse(numeric, scanner, builder);
                                 }
                                 else
                                 {
@@ -87,7 +85,7 @@
                             {
                                 if (previousToken is NumericToken numeric)
                                 {
-                                    CidCharacterParser.Parse(numeric, scanner, builder, isLenientParsing);
+                                    CidCharacterParser.Parse(numeric, scanner, builder);
                                 }
                                 else
                                 {
@@ -99,7 +97,7 @@
                             {
                                 if (previousToken is NumericToken numeric)
                                 {
-                                    CidRangeParser.Parse(numeric, scanner, builder, isLenientParsing);
+                                    CidRangeParser.Parse(numeric, scanner, builder);
                                 }
                                 else
                                 {
@@ -111,7 +109,7 @@
                 }
                 else if (token is NameToken name)
                 {
-                    CidFontNameParser.Parse(name, scanner, builder, isLenientParsing);
+                    CidFontNameParser.Parse(name, scanner, builder);
                 }
 
                 previousToken = token;
@@ -120,8 +118,10 @@
             return builder.Build();
         }
 
-        public CMap ParseExternal(string name)
+        public bool TryParseExternal(string name, out CMap result)
         {
+            result = null;
+
             var resources = typeof(CMapParser).Assembly.GetManifestResourceNames();
 
             var resource = resources.FirstOrDefault(x =>
@@ -129,19 +129,28 @@
 
             if (resource == null)
             {
-                throw new InvalidOperationException("Could not find the referenced CMap: " + name);
+                return false;
             }
 
             byte[] bytes;
             using (var stream = typeof(CMapParser).Assembly.GetManifestResourceStream(resource))
-            using (var memoryStream = new MemoryStream())
             {
-                stream.CopyTo(memoryStream);
+                if (stream == null)
+                {
+                    return false;
+                }
 
-                bytes = memoryStream.ToArray();
+                using (var memoryStream = new MemoryStream())
+                {
+                    stream.CopyTo(memoryStream);
+
+                    bytes = memoryStream.ToArray();
+                }
             }
 
-            return Parse(new ByteArrayInputBytes(bytes), true);
+            result = Parse(new ByteArrayInputBytes(bytes));
+
+            return true;
         }
     }
 }

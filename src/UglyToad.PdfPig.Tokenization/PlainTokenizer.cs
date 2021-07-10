@@ -1,11 +1,13 @@
 ﻿namespace UglyToad.PdfPig.Tokenization
 {
-    using System.Text;
     using Core;
+    using System.Text;
     using Tokens;
 
     internal class PlainTokenizer : ITokenizer
     {
+        private readonly StringBuilder stringBuilder = new StringBuilder();
+
         public bool ReadsNextByte { get; } = true;
 
         public bool TryTokenize(byte currentByte, IInputBytes inputBytes, out IToken token)
@@ -17,7 +19,7 @@
                 return false;
             }
 
-            var builder = new StringBuilder();
+            var builder = stringBuilder;
             builder.Append((char)currentByte);
             while (inputBytes.MoveNext())
             {
@@ -38,6 +40,7 @@
             }
 
             var text = builder.ToString();
+            builder.Clear();
 
             switch (text)
             {

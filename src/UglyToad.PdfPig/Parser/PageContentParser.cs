@@ -7,6 +7,8 @@
     using Graphics;
     using Graphics.Operations;
     using Graphics.Operations.InlineImages;
+    using Graphics.Operations.TextObjects;
+    using Logging;
     using Tokenization.Scanner;
     using Tokens;
 
@@ -19,7 +21,8 @@
             this.operationFactory = operationFactory;
         }
 
-        public IReadOnlyList<IGraphicsStateOperation> Parse(int pageNumber, IInputBytes inputBytes)
+        public IReadOnlyList<IGraphicsStateOperation> Parse(int pageNumber, IInputBytes inputBytes,
+            ILog log)
         {
             var scanner = new CoreTokenScanner(inputBytes);
 
@@ -75,6 +78,8 @@
                         // Work out how much data we missed between the false EI operator and the actual one.
                         var actualEndImageOffset = scanner.CurrentPosition - 3;
 
+                        log.Warn($"End inline image (EI) encountered after previous EI, attempting recovery at {actualEndImageOffset}.");
+
                         var gap = (int)(actualEndImageOffset - lastEndImageOffset);
 
                         var from = inputBytes.CurrentOffset;
@@ -101,11 +106,46 @@
                     }
                     else
                     {
-                        var operation = operationFactory.Create(op, precedingTokens);
+                        IGraphicsStateOperation operation;
+                        try
+                        {
+                            operation = operationFactory.Create(op, precedingTokens);
+                        }
+                        catch (Exception ex)
+                        {
+                            // End images can cause weird state if the "EI" appears inside the inline data stream.
+                            if (TryGetLastEndImage(graphicsStateOperations, out _, out _))
+                            {
+                                log.Error($"Failed reading an operation at offset {inputBytes.CurrentOffset} for page {pageNumber}.", ex);
+                                operation = null;
+                            }
+                            else
+                            {
+                                throw;
+                            }
+                        }
 
                         if (operation != null)
                         {
                             graphicsStateOperations.Add(operation);
+                        }
+                        else if (graphicsStateOperations.Count > 0)
+                        {
+                            if (TryGetLastEndImage(graphicsStateOperations, out var prevEndInlineImage, out var index) && lastEndImageOffset.HasValue)
+                            {
+                                log.Warn($"Operator {op.Data} was not understood following end of inline image data at {lastEndImageOffset}, " +
+                                         "attempting recovery.");
+
+                                var nextByteSet = scanner.RecoverFromIncorrectEndImage(lastEndImageOffset.Value);
+                                graphicsStateOperations.RemoveRange(index, graphicsStateOperations.Count - index);
+                                var newEndInlineImage = new EndInlineImage(prevEndInlineImage.ImageData.Concat(nextByteSet).ToList());
+                                graphicsStateOperations.Add(newEndInlineImage);
+                                lastEndImageOffset = scanner.CurrentPosition - 3;
+                            }
+                            else
+                            {
+                                log.Warn($"Operator which was not understood encountered. Values was {op.Data}. Ignoring.");
+                            }
                         }
                     }
 
@@ -121,6 +161,36 @@
             }
 
             return graphicsStateOperations;
+        }
+
+        private static bool TryGetLastEndImage(List<IGraphicsStateOperation> graphicsStateOperations, out EndInlineImage endImage, out int index)
+        {
+            index = -1;
+            endImage = null;
+
+            if (graphicsStateOperations.Count == 0)
+            {
+                return false;
+            }
+
+            for (int i = graphicsStateOperations.Count - 1; i >= 0; i--)
+            {
+                var last = graphicsStateOperations[i];
+
+                if (last is EndInlineImage ei)
+                {
+                    endImage = ei;
+                    index = i;
+                    return true;
+                }
+
+                if (last is EndText || last is BeginInlineImageData)
+                {
+                    break;
+                }
+            }
+
+            return false;
         }
     }
 }

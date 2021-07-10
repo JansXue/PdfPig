@@ -1,22 +1,22 @@
 ﻿namespace UglyToad.PdfPig.Content
 {
     using System;
-    using System.Diagnostics.Contracts;
-    using Core;
+    using System.Globalization;
 
     /// <summary>
     /// Represents the rotation of a page in a PDF document defined by the page dictionary in degrees clockwise.
     /// </summary>
-    public struct PageRotationDegrees : IEquatable<PageRotationDegrees>
+    public readonly struct PageRotationDegrees : IEquatable<PageRotationDegrees>
     {
-        private static readonly TransformationMatrix Rotate90 = TransformationMatrix.FromValues(0, -1, 1, 0);
-        private static readonly TransformationMatrix Rotate180 = TransformationMatrix.FromValues(-1, 0, 0, -1);
-        private static readonly TransformationMatrix Rotate270 = TransformationMatrix.FromValues(0, 1, -1, 0);
-
         /// <summary>
         /// The rotation of the page in degrees clockwise.
         /// </summary>
         public int Value { get; }
+
+        /// <summary>
+        /// Whether the rotation flips the x and y axes.
+        /// </summary>
+        public bool SwapsAxis => (Value == 90) || (Value == 270);
 
         /// <summary>
         /// Get the rotation expressed in radians (anti-clockwise).
@@ -47,6 +47,11 @@
         /// <param name="rotation">Rotation in degrees clockwise.</param>
         public PageRotationDegrees(int rotation)
         {
+            if (rotation < 0)
+            {
+                rotation = 360 + rotation;
+            }
+
             while (rotation >= 360)
             {
                 rotation -= 360;
@@ -59,24 +64,6 @@
 
             Value = rotation;
         }
-        
-        [Pure]
-        internal TransformationMatrix Rotate(TransformationMatrix matrix)
-        {
-            switch (Value)
-            {
-                case 0:
-                    return matrix;
-                case 90:
-                    return Rotate90.Multiply(matrix);
-                case 180:
-                    return Rotate180.Multiply(matrix);
-                case 270:
-                    return Rotate270.Multiply(matrix);
-                default:
-                    throw new InvalidOperationException($"Invalid value for rotation: {Value}.");
-            }
-        }
 
         /// <inheritdoc />
         public override int GetHashCode()
@@ -87,7 +74,7 @@
         /// <inheritdoc />
         public override string ToString()
         {
-            return Value.ToString();
+            return Value.ToString(CultureInfo.InvariantCulture);
         }
 
         /// <inheritdoc />

@@ -767,7 +767,9 @@ namespace UglyToad.PdfPig.Fonts.CompactFontFormat.CharStrings
         {
             if (b == 28)
             {
-                return bytes[++i] << 8 | bytes[++i];
+                var num = bytes[++i] << 8 | bytes[++i];
+                // Next 2 bytes are a 16-bit two's complement number.
+                return (short) (num);
             }
 
             if (b >= 32 && b <= 246)
@@ -858,8 +860,8 @@ namespace UglyToad.PdfPig.Fonts.CompactFontFormat.CharStrings
             return new Type2CharStrings.CommandSequence.CommandIdentifier(precedingValues.Count, false, 255);
         }
 
-        private static int CalculatePrecedingHintBytes(IReadOnlyList<float> precedingValues,
-            IReadOnlyList<Type2CharStrings.CommandSequence.CommandIdentifier> precedingCommands)
+        private static int CalculatePrecedingHintBytes(List<float> precedingValues,
+    List<Type2CharStrings.CommandSequence.CommandIdentifier> precedingCommands)
         {
             int SafeStemCount(int counts)
             {
@@ -871,7 +873,7 @@ namespace UglyToad.PdfPig.Fonts.CompactFontFormat.CharStrings
 
                 return (counts - 1) / 2;
             }
-            
+
             /*
              * The hintmask operator is followed by one or more data bytes that specify the stem hints which are to be active for the
              * subsequent path construction. The number of data bytes must be exactly the number needed to represent the number of
@@ -889,8 +891,14 @@ namespace UglyToad.PdfPig.Fonts.CompactFontFormat.CharStrings
                     precedingNumbers++;
                 }
 
-                foreach (var identifier in precedingCommands.Where(x => x.CommandIndex == i + 1))
+                for (var j = 0; j < precedingCommands.Count; j++)
                 {
+                    var identifier = precedingCommands[j];
+                    if (identifier.CommandIndex != i + 1)
+                    {
+                        continue;
+                    }
+
                     if (!identifier.IsMultiByteCommand
                         && (identifier.CommandId == HintmaskByte || identifier.CommandId == CntrmaskByte)
                         && !hasEncounteredInitialHintMask)

@@ -7,7 +7,6 @@
     using PdfPig.Parser.Parts;
     using Tokenization.Scanner;
     using Tokens;
-    using Util;
 
     internal class EncodingReader : IEncodingReader
     {
@@ -18,7 +17,7 @@
             this.pdfScanner = pdfScanner;
         }
 
-        public Encoding Read(DictionaryToken fontDictionary, bool isLenientParsing, FontDescriptor descriptor = null,
+        public Encoding Read(DictionaryToken fontDictionary, FontDescriptor descriptor = null,
             Encoding fontEncoding = null)
         {
             if (!fontDictionary.TryGet(NameToken.Encoding, out var baseEncodingObject))
@@ -26,7 +25,7 @@
                 return null;
             }
 
-            if (baseEncodingObject is NameToken name)
+            if (DirectObjectFinder.TryGet(baseEncodingObject, pdfScanner, out NameToken name))
             {
                 if (TryGetNamedEncoding(descriptor, name, out var namedEncoding))
                 {
@@ -58,6 +57,11 @@
 
         private Encoding ReadEncodingDictionary(DictionaryToken encodingDictionary, Encoding fontEncoding)
         {
+            if (encodingDictionary == null)
+            {
+                return null;
+            }
+            
             Encoding baseEncoding;
             if (encodingDictionary.TryGet(NameToken.BaseEncoding, out var baseEncodingToken) && baseEncodingToken is NameToken baseEncodingName)
             {
@@ -95,20 +99,17 @@
                 return differences;
             }
 
-            var activeCode = differenceArray.GetNumeric(0).Int;
-
-            for (int i = 1; i < differenceArray.Data.Count; i++)
+            var currentIndex = -1;
+            foreach (var differenceEntry in differenceArray.Data)
             {
-                var entry = differenceArray.Data[i];
-
-                if (entry is NumericToken numeric)
+                if (differenceEntry is NumericToken number)
                 {
-                    activeCode = numeric.Int;
+                    currentIndex = number.Int;
                 }
-                else if (entry is NameToken name)
+                else if (differenceEntry is NameToken name)
                 {
-                    differences.Add((activeCode, name.Data));
-                    activeCode++;
+                    differences.Add((currentIndex, name.Data));
+                    currentIndex++;
                 }
                 else
                 {

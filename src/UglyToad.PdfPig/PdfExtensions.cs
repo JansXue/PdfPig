@@ -7,7 +7,10 @@
     using Tokenization.Scanner;
     using Tokens;
 
-    internal static class PdfExtensions
+    /// <summary>
+    /// Extensions for PDF types.
+    /// </summary>
+    public static class PdfExtensions
     {
         /// <summary>
         /// Try and get the entry with a given name and type or look-up the object if it's an indirect reference.
@@ -29,7 +32,7 @@
             return true;
         }
 
-        internal static T Get<T>(this DictionaryToken dictionary, NameToken name, IPdfTokenScanner scanner) where T : IToken
+        internal static T Get<T>(this DictionaryToken dictionary, NameToken name, IPdfTokenScanner scanner) where T : class, IToken
         {
             if (!dictionary.TryGet(name, out var token) || !(token is T typedToken))
             {
@@ -43,10 +46,26 @@
 
             return typedToken;
         }
-        
-        internal static IReadOnlyList<byte> Decode(this StreamToken stream, IFilterProvider filterProvider)
+
+        /// <summary>
+        /// Get the decoded data from this stream.
+        /// </summary>
+        public static IReadOnlyList<byte> Decode(this StreamToken stream, IFilterProvider filterProvider)
         {
             var filters = filterProvider.GetFilters(stream.StreamDictionary);
+
+            var transform = stream.Data;
+            for (var i = 0; i < filters.Count; i++)
+            {
+                transform = filters[i].Decode(transform, stream.StreamDictionary, i);
+            }
+
+            return transform;
+        }
+
+        internal static IReadOnlyList<byte> Decode(this StreamToken stream, ILookupFilterProvider filterProvider, IPdfTokenScanner scanner)
+        {
+            var filters = filterProvider.GetFilters(stream.StreamDictionary, scanner);
 
             var transform = stream.Data;
             for (var i = 0; i < filters.Count; i++)

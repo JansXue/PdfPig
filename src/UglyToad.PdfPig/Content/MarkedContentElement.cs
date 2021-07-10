@@ -2,8 +2,8 @@
 {
     using System;
     using System.Collections.Generic;
-    using Core;
     using Tokens;
+    using UglyToad.PdfPig.Graphics;
 
     /// <summary>
     /// A marked content element can be used to provide application specific data in the
@@ -77,6 +77,9 @@
         /// </summary>
         public string ExpandedForm { get; }
         
+        /// <summary>
+        /// Create a new <see cref="MarkedContentElement"/>.
+        /// </summary>
         public MarkedContentElement(int markedContentIdentifier, NameToken tag, DictionaryToken properties, 
             string language,
             string actualText,
@@ -109,7 +112,7 @@
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"Index={Index}, MCID={MarkedContentIdentifier}, Tag={Tag}, Properties={Properties}, Contents={Children.Count}";
+            return $"Id={Index}, MCID={MarkedContentIdentifier}, Tag={Tag}, Properties={Properties}, Children={Children.Count}";
         }
     }
 }

@@ -17,20 +17,17 @@
 
     internal class CidFontFactory
     {
-        private readonly FontDescriptorFactory descriptorFactory;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly IPdfTokenScanner pdfScanner;
 
-        public CidFontFactory(IPdfTokenScanner pdfScanner, FontDescriptorFactory descriptorFactory,
-            IFilterProvider filterProvider)
+        public CidFontFactory(IPdfTokenScanner pdfScanner, ILookupFilterProvider filterProvider)
         {
             this.pdfScanner = pdfScanner;
-            this.descriptorFactory = descriptorFactory;
             this.filterProvider = filterProvider;
         }
 
-        public ICidFont Generate(DictionaryToken dictionary, bool isLenientParsing)
-        {
+        public ICidFont Generate(DictionaryToken dictionary)
+        { 
             var type = dictionary.GetNameOrDefault(NameToken.Type);
             if (!NameToken.Font.Equals(type))
             {
@@ -50,7 +47,7 @@
             FontDescriptor descriptor = null;
             if (TryGetFontDescriptor(dictionary, out var descriptorDictionary))
             {
-                descriptor = descriptorFactory.Generate(descriptorDictionary, pdfScanner, isLenientParsing);
+                descriptor = FontDescriptorFactory.Generate(descriptorDictionary, pdfScanner);
             }
 
             var fontProgram = ReadDescriptorFile(descriptor);
@@ -67,7 +64,7 @@
 
             if (NameToken.CidFontType2.Equals(subType))
             {
-                var cidToGid = GetCharacterIdentifierToGlyphIndexMap(dictionary, isLenientParsing);
+                var cidToGid = GetCharacterIdentifierToGlyphIndexMap(dictionary);
 
                 return new Type2CidFont(type, subType, baseFont, systemInfo, descriptor, fontProgram, verticalWritingMetrics, widths, defaultWidth, cidToGid);
             }
@@ -112,14 +109,16 @@
                 return null;
             }
 
-            var fontFile = fontFileStream.Decode(filterProvider);
+            var fontFile = fontFileStream.Decode(filterProvider, pdfScanner);
 
             switch (descriptor.FontFile.FileType)
             {
                 case DescriptorFontFile.FontFileType.TrueType:
+                {
                     var input = new TrueTypeDataBytes(new ByteArrayInputBytes(fontFile));
                     var ttf = TrueTypeFontParser.Parse(input);
                     return new PdfCidTrueTypeFont(ttf);
+                }
                 case DescriptorFontFile.FontFileType.FromSubtype:
                     {
                         if (!DirectObjectFinder.TryGet(descriptor.FontFile.ObjectKey, pdfScanner, out StreamToken str))
@@ -135,21 +134,19 @@
                         if (subtypeName == NameToken.CidFontType0C
                             || subtypeName == NameToken.Type1C)
                         {
-                            var bytes = str.Decode(filterProvider);
+                            var bytes = str.Decode(filterProvider, pdfScanner);
                             var font = CompactFontFormatParser.Parse(new CompactFontFormatData(bytes));
                             return new PdfCidCompactFontFormatFont(font);
                         }
 
                         if (subtypeName == NameToken.OpenType)
                         {
-
+                            var bytes = str.Decode(filterProvider, pdfScanner);
+                            var ttf = TrueTypeFontParser.Parse(new TrueTypeDataBytes(new ByteArrayInputBytes(bytes)));
+                            return new PdfCidTrueTypeFont(ttf);
                         }
-                        else
-                        {
-                            throw new PdfDocumentFormatException($"Unexpected subtype for CID font: {subtypeName}.");
-                        }
-
-                        throw new NotSupportedException($"Cannot read CID font from subtype: {subtypeName}.");
+                        
+                        throw new PdfDocumentFormatException($"Unexpected subtype for CID font: {subtypeName}.");
                     }
                 default:
                     throw new NotSupportedException("Currently only TrueType fonts are supported.");
@@ -160,7 +157,7 @@
         {
             var widths = new Dictionary<int, double>();
 
-            if (!dict.TryGet(NameToken.W, out var widthsItem) || !(widthsItem is ArrayToken widthArray))
+            if (!dict.TryGet(NameToken.W, pdfScanner, out ArrayToken widthArray))
             {
                 return widths;
             }
@@ -169,7 +166,7 @@
             var counter = 0;
             while (counter < size)
             {
-                var firstCode = (NumericToken)widthArray.Data[counter++];
+                var firstCode = DirectObjectFinder.Get<NumericToken>(widthArray.Data[counter++], pdfScanner);
                 var next = widthArray.Data[counter++];
                 if (DirectObjectFinder.TryGet(next, pdfScanner, out ArrayToken array))
                 {
@@ -178,14 +175,14 @@
 
                     for (var i = 0; i < arraySize; i++)
                     {
-                        var width = (NumericToken)array.Data[i];
+                        var width = DirectObjectFinder.Get<NumericToken>(array.Data[i], pdfScanner);
                         widths[startRange + i] = width.Double;
                     }
                 }
                 else
                 {
-                    var secondCode = (NumericToken)next;
-                    var rangeWidth = (NumericToken)widthArray.Data[counter++];
+                    var secondCode = DirectObjectFinder.Get<NumericToken>(next, pdfScanner);
+                    var rangeWidth = DirectObjectFinder.Get<NumericToken>(widthArray.Data[counter++], pdfScanner);
                     var startRange = firstCode.Int;
                     var endRange = secondCode.Int;
                     var width = rangeWidth.Double;
@@ -287,26 +284,24 @@
             return new CharacterIdentifierSystemInfo(registry, ordering, supplement);
         }
 
-        private CharacterIdentifierToGlyphIndexMap GetCharacterIdentifierToGlyphIndexMap(DictionaryToken dictionary, bool isLenientParsing)
+        private CharacterIdentifierToGlyphIndexMap GetCharacterIdentifierToGlyphIndexMap(DictionaryToken dictionary)
         {
             if (!dictionary.TryGet(NameToken.CidToGidMap, out var entry))
             {
                 return new CharacterIdentifierToGlyphIndexMap();
             }
 
-            if (entry is NameToken name)
+            if (DirectObjectFinder.TryGet(entry, pdfScanner, out NameToken _))
             {
-                if (!name.Equals(NameToken.Identity) && !isLenientParsing)
-                {
-                    throw new InvalidOperationException($"The CIDToGIDMap in a Type 0 font should have the value /Identity, instead got: {name}.");
-                }
-
                 return new CharacterIdentifierToGlyphIndexMap();
             }
 
-            var stream = DirectObjectFinder.Get<StreamToken>(entry, pdfScanner);
+            if (!DirectObjectFinder.TryGet(entry, pdfScanner, out StreamToken stream))
+            {
+                throw new PdfDocumentFormatException($"No stream or name token found for /CIDToGIDMap in dictionary: {dictionary}.");
+            }
 
-            var bytes = stream.Decode(filterProvider);
+            var bytes = stream.Decode(filterProvider, pdfScanner);
 
             return new CharacterIdentifierToGlyphIndexMap(bytes);
         }

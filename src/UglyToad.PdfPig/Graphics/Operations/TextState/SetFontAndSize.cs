@@ -1,6 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Graphics.Operations.TextState
 {
     using System;
+    using System.Globalization;
     using System.IO;
     using Tokens;
     using Util.JetBrains.Annotations;
@@ -47,10 +48,7 @@
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            var currentState = operationContext.GetCurrentState();
-
-            currentState.FontState.FontSize = (double)Size;
-            currentState.FontState.FontName = Font;
+            operationContext.SetFontAndSize(Font, (double)Size);
         }
 
         /// <inheritdoc />
@@ -64,7 +62,7 @@
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"{Font} {Size} {Symbol}";
+            return $"{Font} {Size.ToString("G", CultureInfo.InvariantCulture)} {Symbol}";
         }
     }
 }

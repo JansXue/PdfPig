@@ -12,6 +12,7 @@
     using System.Xml.Serialization;
     using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
     using UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector;
+    using UglyToad.PdfPig.Graphics;
     using Util;
 
     /// <summary>
@@ -57,14 +58,14 @@
         /// Get the PAGE-XML (XML) string of the pages layout.
         /// </summary>
         /// <param name="document"></param>
-        /// <param name="includePaths">Draw <see cref="PdfPath"/>s present in the page.</param>
+        /// <param name="includePaths">Draw PdfPaths present in the page.</param>
         public string Get(PdfDocument document, bool includePaths = false)
         {
             throw new NotImplementedException();
         }
 
         /// <summary>
-        /// Get the PAGE-XML (XML) string of the pages layout. Excludes <see cref="PdfPath"/>s.
+        /// Get the PAGE-XML (XML) string of the pages layout. Excludes PdfPaths.
         /// </summary>
         /// <param name="page"></param>
         public string Get(Page page)
@@ -76,7 +77,7 @@
         /// Get the PAGE-XML (XML) string of the pages layout.
         /// </summary>
         /// <param name="page"></param>
-        /// <param name="includePaths">Draw <see cref="PdfPath"/>s present in the page.</param>
+        /// <param name="includePaths">Draw PdfPaths present in the page.</param>
         public string Get(Page page, bool includePaths)
         {
             lineCount = 0;

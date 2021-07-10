@@ -2,17 +2,22 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Globalization;
+    using System.Text;
     using System.IO;
     using System.Linq;
     using Core;
     using Graphics.Operations;
     using Tokens;
+    using Util;
 
     /// <summary>
     /// Writes any type of <see cref="IToken"/> to the corresponding PDF document format output.
     /// </summary>
     public class TokenWriter
     {
+        private static readonly byte Backslash = GetByte("\\");
+
         private static readonly byte ArrayStart = GetByte("[");
         private static readonly byte ArrayEnd = GetByte("]");
 
@@ -20,7 +25,7 @@
         private static readonly byte[] DictionaryEnd = OtherEncodings.StringAsLatin1Bytes(">>");
 
         private static readonly byte Comment = GetByte("%");
-        
+
         private static readonly byte[] Eof = OtherEncodings.StringAsLatin1Bytes("%%EOF");
 
         private static readonly byte[] FalseBytes = OtherEncodings.StringAsLatin1Bytes("false");
@@ -54,6 +59,20 @@
         private static readonly byte Whitespace = GetByte(" ");
 
         private static readonly byte[] Xref = OtherEncodings.StringAsLatin1Bytes("xref");
+
+        private static readonly HashSet<char> DelimiterChars = new HashSet<char>
+        {
+            '(',
+            ')',
+            '<',
+            '>',
+            '[',
+            ']',
+            '{',
+            '}',
+            '/',
+            '%'
+        };
 
         /// <summary>
         /// Writes the given input token to the output stream with the correct PDF format and encoding including whitespace and line breaks as applicable.
@@ -111,8 +130,8 @@
         /// <param name="catalogToken">The object representing the catalog dictionary which is referenced from the trailer dictionary.</param>
         /// <param name="outputStream">The output stream to write to.</param>
         /// <param name="documentInformationReference">The object reference for the document information dictionary if present.</param>
-        internal static void WriteCrossReferenceTable(IReadOnlyDictionary<IndirectReference, long> objectOffsets, 
-            ObjectToken catalogToken,
+        internal static void WriteCrossReferenceTable(IReadOnlyDictionary<IndirectReference, long> objectOffsets,
+            IndirectReference catalogToken,
             Stream outputStream,
             IndirectReference? documentInformationReference)
         {
@@ -142,7 +161,7 @@
             WriteLineBreak(outputStream);
 
             WriteFirstXrefEmptyEntry(outputStream);
-            
+
             foreach (var keyValuePair in objectOffsets.OrderBy(x => x.Key.ObjectNumber))
             {
                 /*
@@ -160,29 +179,29 @@
 
                 var generation = OtherEncodings.StringAsLatin1Bytes(keyValuePair.Key.Generation.ToString("D5"));
                 outputStream.Write(generation, 0, generation.Length);
-                
+
                 WriteWhitespace(outputStream);
 
                 outputStream.WriteByte(InUseEntry);
-                
+
                 WriteWhitespace(outputStream);
                 WriteLineBreak(outputStream);
             }
-            
+
             outputStream.Write(Trailer, 0, Trailer.Length);
             WriteLineBreak(outputStream);
 
             var identifier = new ArrayToken(new IToken[]
             {
-                new HexToken(Guid.NewGuid().ToString("N").ToCharArray()), 
-                new HexToken(Guid.NewGuid().ToString("N").ToCharArray()) 
+                new HexToken(Guid.NewGuid().ToString("N").ToCharArray()),
+                new HexToken(Guid.NewGuid().ToString("N").ToCharArray())
             });
 
             var trailerDictionaryData = new Dictionary<NameToken, IToken>
             {
                 // 1 for the free entry.
                 {NameToken.Size, new NumericToken(objectOffsets.Count + 1)},
-                {NameToken.Root, new IndirectReferenceToken(catalogToken.Number)},
+                {NameToken.Root, new IndirectReferenceToken(catalogToken)},
                 {NameToken.Id, identifier}
             };
 
@@ -204,6 +223,32 @@
 
             // Complete!
             outputStream.Write(Eof, 0, Eof.Length);
+        }
+
+        /// <summary>
+        /// Writes pre-serialized token as an object token to the output stream.
+        /// </summary>
+        /// <param name="objectNumber">Object number of the indirect object.</param>
+        /// <param name="generation">Generation of the indirect object.</param>
+        /// <param name="data">Pre-serialized object contents.</param>
+        /// <param name="outputStream">The stream to write the token to.</param>
+        internal static void WriteObject(long objectNumber, int generation, byte[] data, Stream outputStream)
+        {
+            WriteLong(objectNumber, outputStream);
+            WriteWhitespace(outputStream);
+
+            WriteInt(generation, outputStream);
+            WriteWhitespace(outputStream);
+
+            outputStream.Write(ObjStart, 0, ObjStart.Length);
+            WriteLineBreak(outputStream);
+
+            outputStream.Write(data, 0, data.Length);
+
+            WriteLineBreak(outputStream);
+            outputStream.Write(ObjEnd, 0, ObjEnd.Length);
+
+            WriteLineBreak(outputStream);
         }
 
         private static void WriteHex(HexToken hex, Stream stream)
@@ -275,7 +320,29 @@
 
         private static void WriteName(string name, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(name);
+            /*
+             * Beginning with PDF 1.2, any character except null (character code 0) may be
+             * included in a name by writing its 2-digit hexadecimal code, preceded by the number sign character (#).
+             * This is required for delimiter and whitespace characters.
+             * This is recommended for characters whose codes are outside the range 33 (!) to 126 (~).
+             */
+
+            var sb = new StringBuilder();
+
+            foreach (var c in name)
+            {
+                if (c < 33 || c > 126 || DelimiterChars.Contains(c))
+                {
+                    var str = Hex.GetString(new[] { (byte)c });
+                    sb.Append('#').Append(str);
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+
+            var bytes = OtherEncodings.StringAsLatin1Bytes(sb.ToString());
 
             outputStream.WriteByte(NameStart);
             outputStream.Write(bytes, 0, bytes.Length);
@@ -290,7 +357,7 @@
             }
             else
             {
-                var bytes = OtherEncodings.StringAsLatin1Bytes(number.Data.ToString("G"));
+                var bytes = OtherEncodings.StringAsLatin1Bytes(number.Data.ToString("G", CultureInfo.InvariantCulture));
                 outputStream.Write(bytes, 0, bytes.Length);
             }
 
@@ -329,8 +396,34 @@
 
         private static void WriteString(StringToken stringToken, Stream outputStream)
         {
+            if (stringToken.EncodedWith == StringToken.Encoding.Iso88591)
+            {
+                var isUtf16 = false;
+                for (var i = 0; i < stringToken.Data.Length; i++)
+                {
+                    var c = stringToken.Data[i];
+
+                    if (c == (char) StringStart || c == (char)StringEnd || c == (char) Backslash)
+                    {
+                        stringToken = new StringToken(stringToken.Data.Insert(i++, "\\"), stringToken.EncodedWith);
+                    }
+
+                    // Close enough.
+                    if (c > 250)
+                    {
+                        isUtf16 = true;
+                        break;
+                    }
+                }
+
+                if (isUtf16)
+                {
+                    stringToken = new StringToken(stringToken.Data, StringToken.Encoding.Utf16BE);
+                }
+            }
+
             outputStream.WriteByte(StringStart);
-            var bytes = OtherEncodings.StringAsLatin1Bytes(stringToken.Data);
+            var bytes = stringToken.GetBytes();
             outputStream.Write(bytes, 0, bytes.Length);
             outputStream.WriteByte(StringEnd);
 
@@ -339,7 +432,7 @@
 
         private static void WriteInt(int value, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G"));
+            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G", CultureInfo.InvariantCulture));
             outputStream.Write(bytes, 0, bytes.Length);
         }
 
@@ -350,7 +443,7 @@
 
         private static void WriteLong(long value, Stream outputStream)
         {
-            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G"));
+            var bytes = OtherEncodings.StringAsLatin1Bytes(value.ToString("G", CultureInfo.InvariantCulture));
             outputStream.Write(bytes, 0, bytes.Length);
         }
 

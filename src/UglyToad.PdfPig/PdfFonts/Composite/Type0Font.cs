@@ -1,6 +1,7 @@
 ﻿namespace UglyToad.PdfPig.PdfFonts.Composite
 {
     using System;
+    using System.Collections.Generic;
     using CidFonts;
     using Cmap;
     using Core;
@@ -16,6 +17,8 @@
         private readonly CMap ucs2CMap;
         // ReSharper disable once NotAccessedField.Local
         private readonly bool isChineseJapaneseOrKorean;
+        private readonly Dictionary<int, CharacterBoundingBox> boundingBoxCache
+            = new Dictionary<int, CharacterBoundingBox>();
 
         public NameToken Name => BaseFont;
 
@@ -33,6 +36,8 @@
 
         public bool IsVertical => CMap.WritingMode == WritingMode.Vertical;
 
+        public FontDetails Details { get; }
+
         public Type0Font(NameToken baseFont, ICidFont cidFont, CMap cmap, CMap toUnicodeCMap,
             CMap ucs2CMap,
             bool isChineseJapaneseOrKorean)
@@ -44,6 +49,8 @@
             CidFont = cidFont ?? throw new ArgumentNullException(nameof(cidFont));
             CMap = cmap ?? throw new ArgumentNullException(nameof(cmap));
             ToUnicode = new ToUnicodeCMap(toUnicodeCMap);
+            Details = cidFont.Details?.WithName(Name.Data) 
+                      ?? FontDetails.GetDefault(Name.Data);
         }
 
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
@@ -84,6 +91,11 @@
 
         public CharacterBoundingBox GetBoundingBox(int characterCode)
         {
+            if (boundingBoxCache.TryGetValue(characterCode, out var cached))
+            {
+                return cached;
+            }
+
             var matrix = GetFontMatrix();
 
             var boundingBox = GetBoundingBoxInGlyphSpace(characterCode);
@@ -94,9 +106,13 @@
 
             var width = CidFont.GetWidthFromFont(characterIdentifier);
 
-            var advanceWidth = matrix.Transform(new PdfPoint(width, 0)).X;
+            var advanceWidth = matrix.TransformX(width);
 
-            return new CharacterBoundingBox(boundingBox, advanceWidth);
+            var result = new CharacterBoundingBox(boundingBox, advanceWidth);
+
+            boundingBoxCache[characterCode] = result;
+
+            return result;
         }
 
         public PdfRectangle GetBoundingBoxInGlyphSpace(int characterCode)

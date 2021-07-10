@@ -13,11 +13,11 @@
 
     internal class Type3FontHandler : IFontHandler
     {
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly IEncodingReader encodingReader;
         private readonly IPdfTokenScanner scanner;
 
-        public Type3FontHandler(IPdfTokenScanner scanner, IFilterProvider filterProvider,
+        public Type3FontHandler(IPdfTokenScanner scanner, ILookupFilterProvider filterProvider,
             IEncodingReader encodingReader)
         {
             this.filterProvider = filterProvider;
@@ -25,7 +25,7 @@
             this.scanner = scanner;
         }
 
-        public IFont Generate(DictionaryToken dictionary, bool isLenientParsing)
+        public IFont Generate(DictionaryToken dictionary)
         {
             var boundingBox = GetBoundingBox(dictionary);
 
@@ -33,25 +33,37 @@
 
             var firstCharacter = FontDictionaryAccessHelper.GetFirstCharacter(dictionary);
             var lastCharacter = FontDictionaryAccessHelper.GetLastCharacter(dictionary);
-            var widths = FontDictionaryAccessHelper.GetWidths(scanner, dictionary, isLenientParsing);
+            var widths = FontDictionaryAccessHelper.GetWidths(scanner, dictionary);
             
-            Encoding encoding = encodingReader.Read(dictionary, isLenientParsing);
+            Encoding encoding = encodingReader.Read(dictionary);
 
             CMap toUnicodeCMap = null;
             if (dictionary.TryGet(NameToken.ToUnicode, out var toUnicodeObj))
             {
                 var toUnicode = DirectObjectFinder.Get<StreamToken>(toUnicodeObj, scanner);
 
-                var decodedUnicodeCMap = toUnicode?.Decode(filterProvider);
+                var decodedUnicodeCMap = toUnicode?.Decode(filterProvider, scanner);
 
                 if (decodedUnicodeCMap != null)
                 {
-                    toUnicodeCMap = CMapCache.Parse(new ByteArrayInputBytes(decodedUnicodeCMap), isLenientParsing);
+                    toUnicodeCMap = CMapCache.Parse(new ByteArrayInputBytes(decodedUnicodeCMap));
                 }
             }
-            
-            return new Type3Font(NameToken.Type3, boundingBox, fontMatrix, encoding, firstCharacter,
+
+            var name = GetFontName(dictionary);
+
+            return new Type3Font(name, boundingBox, fontMatrix, encoding, firstCharacter,
                 lastCharacter, widths, toUnicodeCMap);
+        }
+
+        private NameToken GetFontName(DictionaryToken dictionary)
+        {
+            if (dictionary.TryGet(NameToken.Name, scanner, out NameToken fontName))
+            {
+                return fontName;
+            }
+
+            return NameToken.Type3;
         }
 
         private TransformationMatrix GetFontMatrix(DictionaryToken dictionary)

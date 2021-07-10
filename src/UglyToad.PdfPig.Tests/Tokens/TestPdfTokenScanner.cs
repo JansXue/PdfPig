@@ -28,6 +28,8 @@ namespace UglyToad.PdfPig.Tests.Tokens
         }
 
         public long CurrentPosition { get; set; }
+        public long Length { get; } = 10;
+
         public void RegisterCustomTokenizer(byte firstByte, ITokenizer tokenizer)
         {
             throw new NotImplementedException();
@@ -41,6 +43,11 @@ namespace UglyToad.PdfPig.Tests.Tokens
         public ObjectToken Get(IndirectReference reference)
         {
             return Objects[reference];
+        }
+
+        public void ReplaceToken(IndirectReference reference, IToken token)
+        {
+            throw new NotImplementedException();
         }
 
         public void Dispose()

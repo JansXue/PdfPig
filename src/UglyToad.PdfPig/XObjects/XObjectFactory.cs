@@ -11,11 +11,13 @@
     using Graphics.Core;
     using Tokenization.Scanner;
     using Tokens;
+    using UglyToad.PdfPig.Parser.Parts;
+    using Util;
 
     internal static class XObjectFactory
     {
         public static XObjectImage ReadImage(XObjectContentRecord xObject, IPdfTokenScanner pdfScanner,
-            IFilterProvider filterProvider,
+            ILookupFilterProvider filterProvider,
             IResourceStore resourceStore)
         {
             if (xObject == null)
@@ -66,7 +68,48 @@
             var interpolate = dictionary.TryGet(NameToken.Interpolate, pdfScanner, out BooleanToken interpolateToken)
                               && interpolateToken.Data;
 
-            var decodedBytes = new Lazy<IReadOnlyList<byte>>(() => xObject.Stream.Decode(filterProvider));
+            DictionaryToken filterDictionary = xObject.Stream.StreamDictionary;
+            if (xObject.Stream.StreamDictionary.TryGet(NameToken.Filter, out var filterToken)
+                && filterToken is IndirectReferenceToken)
+            {
+                if (filterDictionary.TryGet(NameToken.Filter, pdfScanner, out ArrayToken filterArray))
+                {
+                    filterDictionary = filterDictionary.With(NameToken.Filter, filterArray);
+                }
+                else if (filterDictionary.TryGet(NameToken.Filter, pdfScanner, out NameToken filterNameToken))
+                {
+                    filterDictionary = filterDictionary.With(NameToken.Filter, filterNameToken);
+                }
+                else
+                {
+                    filterDictionary = null;
+                }
+            }
+
+            var supportsFilters = filterDictionary != null;
+            if (filterDictionary != null)
+            {
+                var filters = filterProvider.GetFilters(filterDictionary, pdfScanner);
+                foreach (var filter in filters)
+                {
+                    if (!filter.IsSupported)
+                    {
+                        supportsFilters = false;
+                        break;
+                    }
+                }
+            }
+
+            var decodeParams = dictionary.GetObjectOrDefault(NameToken.DecodeParms, NameToken.Dp);
+            if (decodeParams is IndirectReferenceToken refToken)
+            {
+                dictionary = dictionary.With(NameToken.DecodeParms, pdfScanner.Get(refToken.Data).Data);
+            }
+
+            var streamToken = new StreamToken(dictionary, xObject.Stream.Data);
+            
+            var decodedBytes = supportsFilters ? new Lazy<IReadOnlyList<byte>>(() => streamToken.Decode(filterProvider, pdfScanner))
+                : null;
 
             var decode = EmptyArray<decimal>.Instance;
 
@@ -102,9 +145,26 @@
                 }
             }
 
-            return new XObjectImage(bounds, width, height, bitsPerComponent, colorSpace, isJpxDecode, isImageMask, intent, interpolate, decode,
-                dictionary, xObject.Stream.Data, decodedBytes);
+            var details = ColorSpaceDetailsParser.GetColorSpaceDetails(colorSpace, dictionary, pdfScanner, resourceStore, filterProvider);
+
+            return new XObjectImage(
+                bounds,
+                width,
+                height,
+                bitsPerComponent,
+                colorSpace,
+                isJpxDecode,
+                isImageMask,
+                intent,
+                interpolate,
+                decode,
+                dictionary,
+                xObject.Stream.Data,
+                decodedBytes,
+                details);
         }
+
+        
 
         private static bool TryMapColorSpace(NameToken name, IResourceStore resourceStore, out ColorSpace colorSpaceResult)
         {

@@ -56,16 +56,7 @@
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            var controlPoint1 = new PdfPoint(X1, Y1);
-            var end = new PdfPoint(X3, Y3);
-            var controlPoint1Transform = operationContext.CurrentTransformationMatrix.Transform(controlPoint1);
-            var endTransform = operationContext.CurrentTransformationMatrix.Transform(end);
-            operationContext.CurrentPath.BezierCurveTo(controlPoint1Transform.X, controlPoint1Transform.Y,
-                endTransform.X,
-                endTransform.Y,
-                endTransform.X,
-                endTransform.Y);
-            operationContext.CurrentPosition = endTransform;
+            operationContext.BezierCurveTo((double)X1, (double)Y1, (double)X3, (double)Y3, (double)X3, (double)Y3);
         }
 
         /// <inheritdoc />

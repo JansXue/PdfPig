@@ -56,14 +56,7 @@
         /// <inheritdoc />
         public void Run(IOperationContext operationContext)
         {
-            var lowerLeft = new PdfPoint(LowerLeftX, LowerLeftY);
-            var upperRight = new PdfPoint(LowerLeftX + Width, LowerLeftY + Height);
-
-            operationContext.BeginSubpath();
-            var lowerLeftTransform = operationContext.CurrentTransformationMatrix.Transform(lowerLeft);
-            var upperRightTransform = operationContext.CurrentTransformationMatrix.Transform(upperRight);
-
-            operationContext.CurrentPath.Rectangle(lowerLeftTransform.X, lowerLeftTransform.Y, upperRightTransform.X - lowerLeftTransform.X, upperRightTransform.Y - lowerLeftTransform.Y);
+            operationContext.Rectangle((double)LowerLeftX, (double)LowerLeftY, (double)Width, (double)Height);
         }
 
         /// <inheritdoc />

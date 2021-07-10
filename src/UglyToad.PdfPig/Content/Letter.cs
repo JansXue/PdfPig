@@ -2,6 +2,7 @@
 {
     using Core;
     using Graphics.Colors;
+    using PdfFonts;
 
     /// <summary>
     /// A glyph or combination of glyphs (characters) drawn by a PDF content stream.
@@ -14,9 +15,9 @@
         public string Value { get; }
 
         /// <summary>
-        /// Text direction of the letter.
+        /// Text orientation of the letter.
         /// </summary>
-        public TextDirection TextDirection { get; }
+        public TextOrientation TextOrientation { get; }
 
         /// <summary>
         /// The placement position of the character in PDF space. See <see cref="StartBaseLine"/>
@@ -53,7 +54,12 @@
         /// <summary>
         /// The name of the font.
         /// </summary>
-        public string FontName { get; }
+        public string FontName => Font?.Name;
+
+        /// <summary>
+        /// Details about the font for this letter.
+        /// </summary>
+        public FontDetails Font { get; }
 
         /// <summary>
         /// The color of the letter.
@@ -61,9 +67,9 @@
         public IColor Color { get; }
 
         /// <summary>
-        /// The size of the font in points. This is not ready for public consumption as the calculation is incorrect.
+        /// The size of the font in points.
         /// </summary>
-        internal double PointSize { get; }
+        public double PointSize { get; }
 
         /// <summary>
         /// Sequence number of the ShowText operation that printed this letter.
@@ -73,12 +79,12 @@
         /// <summary>
         /// Create a new letter to represent some text drawn by the Tj operator.
         /// </summary>
-        internal Letter(string value, PdfRectangle glyphRectangle, 
-            PdfPoint startBaseLine, 
+        public Letter(string value, PdfRectangle glyphRectangle,
+            PdfPoint startBaseLine,
             PdfPoint endBaseLine,
             double width,
             double fontSize,
-            string fontName, 
+            FontDetails font,
             IColor color,
             double pointSize,
             int textSequence)
@@ -89,36 +95,36 @@
             EndBaseLine = endBaseLine;
             Width = width;
             FontSize = fontSize;
-            FontName = fontName;
+            Font = font;
             Color = color ?? GrayColor.Black;
             PointSize = pointSize;
             TextSequence = textSequence;
-            TextDirection = GetTextDirection();
+            TextOrientation = GetTextOrientation();
         }
 
-        private TextDirection GetTextDirection()
+        private TextOrientation GetTextOrientation()
         {
             if (System.Math.Abs(StartBaseLine.Y - EndBaseLine.Y) < 10e-5)
             {
                 if (StartBaseLine.X > EndBaseLine.X)
                 {
-                    return TextDirection.Rotate180;
+                    return TextOrientation.Rotate180;
                 }
 
-                return TextDirection.Horizontal;
+                return TextOrientation.Horizontal;
             }
 
             if (System.Math.Abs(StartBaseLine.X - EndBaseLine.X) < 10e-5)
             {
                 if (StartBaseLine.Y > EndBaseLine.Y)
                 {
-                    return TextDirection.Rotate90;
+                    return TextOrientation.Rotate90;
                 }
 
-                return TextDirection.Rotate270;
+                return TextOrientation.Rotate270;
             }
 
-            return TextDirection.Unknown;
+            return TextOrientation.Other;
         }
 
         /// <summary>

@@ -4,6 +4,7 @@
     using Logging;
     using PdfPig.Core;
     using PdfPig.Parser.FileStructure;
+    using PdfPig.Tokenization.Scanner;
     using Xunit;
 
     public class FileHeaderParserTests
@@ -33,6 +34,7 @@
             var result = FileHeaderParser.Parse(scanner, false, log);
 
             Assert.Equal(format, result.VersionString);
+            Assert.Equal(0, result.OffsetInFile);
         }
 
         [Fact]
@@ -47,6 +49,7 @@
             var result = FileHeaderParser.Parse(scanner, false, log);
 
             Assert.Equal(1.2m, result.Version);
+            Assert.Equal(TestEnvironment.IsUnixPlatform ? 7 : 9, result.OffsetInFile);
         }
 
         [Fact]
@@ -60,14 +63,15 @@
         }
 
         [Fact]
-        public void HeaderPrecededByJunkNonLenientThrows()
+        public void HeaderPrecededByJunkNonLenientDoesNotThrow()
         {
             var scanner = StringBytesTestConverter.Scanner(@"one    
     %PDF-1.2");
 
-            Action action = () => FileHeaderParser.Parse(scanner, false, log);
+            var result = FileHeaderParser.Parse(scanner, false, log);
 
-            Assert.Throws<PdfDocumentFormatException>(action);
+            Assert.Equal(1.2m, result.Version);
+            Assert.Equal(TestEnvironment.IsUnixPlatform ? 12 : 13, result.OffsetInFile);
         }
 
         [Fact]
@@ -79,17 +83,19 @@
             var result = FileHeaderParser.Parse(scanner, true, log);
 
             Assert.Equal(1.7m, result.Version);
+            Assert.Equal(TestEnvironment.IsUnixPlatform ? 12 : 13, result.OffsetInFile);
         }
 
         [Fact]
-        public void HeaderPrecededByTooMuchJunkThrows()
+        public void HeaderPrecededByJunkDoesNotThrow()
         {
             var scanner = StringBytesTestConverter.Scanner(@"one two
 three %PDF-1.6");
 
-            Action action = () => FileHeaderParser.Parse(scanner, true, log);
+            var result = FileHeaderParser.Parse(scanner, true, log);
 
-            Assert.Throws<PdfDocumentFormatException>(action);
+            Assert.Equal(1.6m, result.Version);
+            Assert.Equal(TestEnvironment.IsUnixPlatform ? 14 : 15, result.OffsetInFile);
         }
 
         [Fact]
@@ -127,9 +133,22 @@ three %PDF-1.6");
         {
             var scanner = StringBytesTestConverter.Scanner(@"%FDF-1.6");
 
-            FileHeaderParser.Parse(scanner, false, log);
+            var result = FileHeaderParser.Parse(scanner, false, log);
 
             Assert.Equal(0, scanner.CurrentPosition);
+            Assert.Equal(0, result.OffsetInFile);
+        }
+
+        [Fact]
+        public void Issue334()
+        {
+            var input = OtherEncodings.StringAsLatin1Bytes("%PDF-1.7\r\n%âãÏÓ\r\n1 0 obj\r\n<</Lang(en-US)>>\r\nendobj");
+
+            var scanner = new CoreTokenScanner(new ByteArrayInputBytes(input), ScannerScope.None);
+
+            var result = FileHeaderParser.Parse(scanner, false, log);
+
+            Assert.Equal(1.7m, result.Version);
         }
     }
 }

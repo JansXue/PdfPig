@@ -1,10 +1,13 @@
-﻿namespace UglyToad.PdfPig.Tests.Integration
+﻿using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
+
+namespace UglyToad.PdfPig.Tests.Integration
 {
     using System;
     using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using PdfPig.Core;
+    using DocumentLayoutAnalysis.Export;
     using Xunit;
 
     public class LaTexTests
@@ -142,6 +145,32 @@ used per estimate, we introduce a “complement class”Naive Bayes is often us
                 var text = OtherEncodings.BytesAsLatin1String(metadata.GetXmlBytes().ToArray());
 
                 Assert.StartsWith("<?xpacket begin='' id='W5M0MpCehiHzreSzNTczkc9d'", text);
+            }
+        }
+
+        [Fact]
+        public void CanExportSvg()
+        {
+            using (var document = PdfDocument.Open(GetFilename(), new ParsingOptions{ ClipPaths = true }))
+            {
+                var page = document.GetPage(1);
+
+                var svg = new SvgTextExporter().Get(page);
+
+                Assert.NotNull(svg);
+            }
+        }
+
+        [Fact]
+        public void CanExtractContentOrderText()
+        {
+            using (var document = PdfDocument.Open(GetFilename()))
+            {
+                foreach (var page in document.GetPages())
+                {
+                    var text = ContentOrderTextExtractor.GetText(page);
+                    Assert.NotNull(text);
+                }
             }
         }
 

@@ -1,11 +1,11 @@
 ﻿namespace UglyToad.PdfPig.Content
 {
-    using System;
-    using System.Collections.Generic;
     using Core;
     using Filters;
     using Graphics;
     using Graphics.Operations;
+    using System;
+    using System.Collections.Generic;
     using Tokenization.Scanner;
     using XObjects;
 
@@ -21,7 +21,7 @@
         private readonly IReadOnlyList<Union<XObjectContentRecord, InlineImage>> images;
         private readonly IReadOnlyList<MarkedContentElement> markedContents;
         private readonly IPdfTokenScanner pdfScanner;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly IResourceStore resourceStore;
 
         internal IReadOnlyList<IGraphicsStateOperation> GraphicsStateOperations { get; }
@@ -30,12 +30,14 @@
 
         public IReadOnlyList<PdfPath> Paths { get; }
 
+        public int NumberOfImages => images.Count;
+
         internal PageContent(IReadOnlyList<IGraphicsStateOperation> graphicsStateOperations, IReadOnlyList<Letter> letters,
             IReadOnlyList<PdfPath> paths,
             IReadOnlyList<Union<XObjectContentRecord, InlineImage>> images,
             IReadOnlyList<MarkedContentElement> markedContents,
             IPdfTokenScanner pdfScanner,
-            IFilterProvider filterProvider,
+            ILookupFilterProvider filterProvider,
             IResourceStore resourceStore)
         {
             GraphicsStateOperations = graphicsStateOperations;
@@ -52,10 +54,14 @@
         {
             foreach (var image in images)
             {
-                var result = image.Match<IPdfImage>(x => XObjectFactory.ReadImage(x, pdfScanner, filterProvider, resourceStore),
-                    x => x);
-
-                yield return result;
+                if (image.TryGetFirst(out var xObjectContentRecord))
+                {
+                    yield return XObjectFactory.ReadImage(xObjectContentRecord, pdfScanner, filterProvider, resourceStore);
+                }
+                else if (image.TryGetSecond(out var inlineImage))
+                {
+                    yield return inlineImage;
+                }
             }
         }
 

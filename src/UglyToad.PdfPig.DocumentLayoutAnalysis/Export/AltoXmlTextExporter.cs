@@ -10,9 +10,9 @@
     using System.Xml;
     using System.Xml.Serialization;
     using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
+    using UglyToad.PdfPig.Graphics;
     using Util;
 
-    /// <inheritdoc />
     /// <summary>
     /// Alto 4.1 (XML) text exporter.
     /// <para>See https://github.com/altoxml/schema </para>
@@ -54,7 +54,7 @@
         /// Get the Alto (XML) string of the pages layout.
         /// </summary>
         /// <param name="document">The document to extract page layouts from.</param>
-        /// <param name="includePaths">Draw <see cref="PdfPath"/>s present in the page.</param>
+        /// <param name="includePaths">Draw PdfPaths present in the page.</param>
         public string Get(PdfDocument document, bool includePaths = false)
         {
             var altoDocument = CreateAltoDocument("unknown");
@@ -65,9 +65,8 @@
             return Serialize(altoDocument);
         }
 
-        /// <inheritdoc />
         /// <summary>
-        /// Get the Alto (XML) string of the page layout. Excludes <see cref="T:UglyToad.PdfPig.Geometry.PdfPath" />s.
+        /// Get the Alto (XML) string of the page layout. Excludes <see cref="T:UglyToad.PdfPig.Geometry.PdfSubpath" />s.
         /// </summary>
         /// <param name="page">The page to export the XML layout for.</param>
         public string Get(Page page) => Get(page, false);
@@ -76,7 +75,7 @@
         /// Get the Alto (XML) string of the page layout.
         /// </summary>
         /// <param name="page">The page to export the XML layout for.</param>
-        /// <param name="includePaths">Whether the output should include the <see cref="PdfPath"/>s present in the page.</param>
+        /// <param name="includePaths">Whether the output should include the PdfPaths present in the page.</param>
         public string Get(Page page, bool includePaths)
         {
             var document = CreateAltoDocument("unknown");

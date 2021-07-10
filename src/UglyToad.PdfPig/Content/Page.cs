@@ -4,12 +4,13 @@
     using System.Collections.Generic;
     using System.Text;
     using Annotations;
-    using Core;
     using Graphics.Operations;
     using Tokens;
     using Util;
     using Util.JetBrains.Annotations;
     using Tokenization.Scanner;
+    using Graphics;
+    using System.Linq;
 
     /// <summary>
     /// Contains the content and provides access to methods of a single page in the <see cref="PdfDocument"/>.
@@ -17,7 +18,7 @@
     public class Page
     {
         private readonly AnnotationProvider annotationProvider;
-        private readonly IPdfTokenScanner pdfScanner;
+        internal readonly IPdfTokenScanner pdfScanner;
         private readonly Lazy<string> textLazy;
 
         /// <summary>
@@ -35,7 +36,10 @@
         /// </summary>
         public CropBox CropBox { get; }
 
-        internal MediaBox MediaBox { get; }
+        /// <summary>
+        /// Defines the boundaries of the physical medium on which the page shall be displayed or printed.
+        /// </summary>
+        public MediaBox MediaBox { get; }
 
         internal PageContent Content { get; }
 
@@ -68,6 +72,11 @@
         /// The size of the page according to the standard page sizes or <see cref="PageSize.Custom"/> if no matching standard size found.
         /// </summary>
         public PageSize Size { get; }
+
+        /// <summary>
+        /// The number of images on this page. Use <see cref="GetImages"/> to access the image contents.
+        /// </summary>
+        public int NumberOfImages => Content.NumberOfImages;
 
         /// <summary>
         /// The parsed graphics state operations in the content stream for this page. 
@@ -187,12 +196,43 @@
             }
 
             /// <summary>
-            /// Gets the calculated letter size in points.
-            /// This is considered experimental because the calculated value is incorrect for some documents at present.
+            /// Gets any optional content on the page.
+            /// <para>Does not handle XObjects and annotations for the time being.</para>
             /// </summary>
-            public double GetPointSize(Letter letter)
+            public IReadOnlyDictionary<string, IReadOnlyList<OptionalContentGroupElement>> GetOptionalContents()
             {
-                return letter.PointSize;
+                List<OptionalContentGroupElement> mcesOptional = new List<OptionalContentGroupElement>();
+
+                // 4.10.2
+                // Optional content in content stream
+                GetOptionalContentsRecursively(page.Content?.GetMarkedContents(), ref mcesOptional);
+
+                // Optional content in XObjects and annotations
+                // TO DO
+                //var annots = GetAnnotations().ToList();
+
+                return mcesOptional.GroupBy(oc => oc.Name).ToDictionary(g => g.Key, g => g.ToList() as IReadOnlyList<OptionalContentGroupElement>);
+            }
+
+            private void GetOptionalContentsRecursively(IReadOnlyList<MarkedContentElement> markedContentElements, ref List<OptionalContentGroupElement> mcesOptional)
+            {
+                if (markedContentElements.Count == 0)
+                {
+                    return;
+                }
+
+                foreach (var mce in markedContentElements)
+                {
+                    if (mce.Tag == "OC")
+                    {
+                        mcesOptional.Add(new OptionalContentGroupElement(mce, page.pdfScanner));
+                        // we don't recurse
+                    }
+                    else if (mce.Children?.Count > 0)
+                    {
+                        GetOptionalContentsRecursively(mce.Children, ref mcesOptional);
+                    }
+                }
             }
         }
     }

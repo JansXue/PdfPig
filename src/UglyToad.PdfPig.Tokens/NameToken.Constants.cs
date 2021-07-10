@@ -278,6 +278,9 @@
         public static readonly NameToken If = new NameToken("IF");
         public static readonly NameToken Im = new NameToken("IM");
         public static readonly NameToken Image = new NameToken("Image");
+        public static readonly NameToken ImageB = new NameToken("ImageB");
+        public static readonly NameToken ImageC = new NameToken("ImageC");
+        public static readonly NameToken ImageI = new NameToken("ImageI");
         public static readonly NameToken ImageMask = new NameToken("ImageMask");
         public static readonly NameToken Index = new NameToken("Index");
         public static readonly NameToken Indexed = new NameToken("Indexed");
@@ -331,13 +334,16 @@
         public static readonly NameToken Mac = new NameToken("Mac");
         public static readonly NameToken MacExpertEncoding = new NameToken("MacExpertEncoding");
         public static readonly NameToken MacRomanEncoding = new NameToken("MacRomanEncoding");
+        public static readonly NameToken Marked = new NameToken("Marked");
         public static readonly NameToken MarkInfo = new NameToken("MarkInfo");
         public static readonly NameToken Mask = new NameToken("Mask");
         public static readonly NameToken Matrix = new NameToken("Matrix");
+        public static readonly NameToken Matte = new NameToken("Matte");
         public static readonly NameToken MaxLen = new NameToken("MaxLen");
         public static readonly NameToken MaxWidth = new NameToken("MaxWidth");
         public static readonly NameToken Mcid = new NameToken("MCID");
         public static readonly NameToken Mdp = new NameToken("MDP");
+        public static readonly NameToken Measure = new NameToken("Measure");
         public static readonly NameToken MediaBox = new NameToken("MediaBox");
         public static readonly NameToken Metadata = new NameToken("Metadata");
         public static readonly NameToken MissingWidth = new NameToken("MissingWidth");
@@ -545,10 +551,12 @@
         public static readonly NameToken Unix = new NameToken("Unix");
         public static readonly NameToken Uri = new NameToken("URI");
         public static readonly NameToken Url = new NameToken("URL");
+        public static readonly NameToken Usage = new NameToken("Usage");
         public static readonly NameToken UserUnit = new NameToken("UserUnit");
         // V
         public static readonly NameToken V = new NameToken("V");
         public static readonly NameToken V2 = new NameToken("V2");
+        public static readonly NameToken VE = new NameToken("VE");
         public static readonly NameToken VerisignPpkvs = new NameToken("VeriSign.PPKVS");
         public static readonly NameToken Version = new NameToken("Version");
         public static readonly NameToken Vertices = new NameToken("Vertices");
@@ -557,6 +565,7 @@
         public static readonly NameToken ViewClip = new NameToken("ViewClip");
         public static readonly NameToken ViewerPreferences = new NameToken("ViewerPreferences");
         public static readonly NameToken Volume = new NameToken("Volume");
+        public static readonly NameToken Vp = new NameToken("VP");
         // W
         public static readonly NameToken W = new NameToken("W");
         public static readonly NameToken W2 = new NameToken("W2");

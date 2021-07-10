@@ -24,6 +24,8 @@
 
         public bool IsVertical { get; } = false;
 
+        public FontDetails Details { get; }
+
         public Type3Font(NameToken name, PdfRectangle boundingBox, TransformationMatrix fontMatrix,
             Encoding encoding, int firstChar, int lastChar, double[] widths,
             CMap toUnicodeCMap)
@@ -37,6 +39,7 @@
             this.lastChar = lastChar;
             this.widths = widths;
             this.toUnicodeCMap = new ToUnicodeCMap(toUnicodeCMap);
+            Details = FontDetails.GetDefault(name?.Data);
         }
 
         public int ReadCharacterCode(IInputBytes bytes, out int codeLength)
@@ -67,7 +70,7 @@
 
             characterBoundingBox = fontMatrix.Transform(characterBoundingBox);
 
-            var width = fontMatrix.Transform(new PdfPoint(widths[characterCode - firstChar], 0)).X;
+            var width = fontMatrix.TransformX(widths[characterCode - firstChar]);
 
             return new CharacterBoundingBox(characterBoundingBox, width);
         }
@@ -79,7 +82,7 @@
                 throw new InvalidFontFormatException($"The character code was not contained in the widths array: {characterCode}.");
             }
 
-            return new PdfRectangle(0, 0, widths[characterCode - firstChar], 0); ;
+            return new PdfRectangle(0, 0, widths[characterCode - firstChar], 0);
         }
 
         public TransformationMatrix GetFontMatrix()

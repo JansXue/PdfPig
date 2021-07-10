@@ -22,6 +22,51 @@
         public static TransformationMatrix GetTranslationMatrix(double x, double y) => new TransformationMatrix(1, 0, 0,
             0, 1, 0,
             x, y, 1);
+        
+        /// <summary>
+        /// Create a new <see cref="TransformationMatrix"/> with the X and Y scaling values set.
+        /// </summary>
+        public static TransformationMatrix GetScaleMatrix(double scaleX, double scaleY) => new TransformationMatrix(scaleX, 0, 0,
+            0, scaleY, 0,
+            0, 0, 1);
+
+        /// <summary>
+        /// Create a new <see cref="TransformationMatrix"/> with the X and Y scaling values set.
+        /// </summary>
+        public static TransformationMatrix GetRotationMatrix(double degreesCounterclockwise)
+        {
+            double cos;
+            double sin;
+
+            switch (degreesCounterclockwise)
+            {
+                case 0:
+                case 360:
+                    cos = 1;
+                    sin = 0;
+                    break;
+                case 90:
+                    cos = 0;
+                    sin = 1;
+                    break;
+                case 180:
+                    cos = -1;
+                    sin = 0;
+                    break;
+                case 270:
+                    cos = 0;
+                    sin = -1;
+                    break;
+                default:
+                    cos = Math.Cos(degreesCounterclockwise * (Math.PI / 180));
+                    sin = Math.Sin(degreesCounterclockwise * (Math.PI / 180));
+                    break;
+            }
+
+            return new TransformationMatrix(cos, sin, 0,
+                -sin, cos, 0,
+                0, 0, 1);
+        }
 
         private readonly double row1;
         private readonly double row2;
@@ -313,6 +358,29 @@
             return new TransformationMatrix(A * scalar, B * scalar, row1 * scalar,
                 C * scalar, D * scalar, row2 * scalar,
                 E * scalar, F * scalar, row3 * scalar);
+        }
+
+        /// <summary>
+        /// Get the inverse of the current matrix.
+        /// </summary>
+        public TransformationMatrix Inverse()
+        {
+            var a = (D * row3 - row2 * F);
+            var c = -(C * row3 - row2 * E);
+            var e = (C * F - D * E);
+
+            var b = -(B * row3 - row1 * F);
+            var d = (A * row3 - row1 * E);
+            var f = -(A * F - B * E);
+
+            var r1 = (B * row2 - row1 * D);
+            var r2 = -(A * row2 - row1 * C);
+            var r3 = (A * D - B * C);
+            var det = A * a + B * c + row1 * e;
+
+            return new TransformationMatrix(a / det, b / det, r1 / det,
+                c / det, d / det, r2 / det,
+                e / det, f / det, r3 / det);
         }
 
         /// <summary>

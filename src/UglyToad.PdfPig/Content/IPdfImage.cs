@@ -4,6 +4,7 @@
     using Core;
     using Graphics.Colors;
     using Graphics.Core;
+    using UglyToad.PdfPig.Tokens;
     using XObjects;
 
     /// <summary>
@@ -41,13 +42,6 @@
         /// The number of bits used to represent each color component.
         /// </summary>
         int BitsPerComponent { get; }
-
-        /// <summary>
-        /// The bytes of the image with any filters decoded.
-        /// If the filter used to encode the bytes is not supported accessing this property will throw, access the <see cref="RawBytes"/>
-        /// instead.
-        /// </summary>
-        IReadOnlyList<byte> Bytes { get; }
 
         /// <summary>
         /// The encoded bytes of the image with all filters still applied.
@@ -90,5 +84,26 @@
         /// Whether this image is an <see cref="InlineImage"/> or a <see cref="XObjectImage"/>.
         /// </summary>
         bool IsInlineImage { get; }
+
+        /// <summary>
+        /// The full dictionary for this image object.
+        /// </summary>
+        DictionaryToken ImageDictionary { get; }
+
+        /// <summary>
+        /// Full details for the <see cref="ColorSpace"/> with any associated data.
+        /// </summary>
+        ColorSpaceDetails ColorSpaceDetails { get; }
+
+        /// <summary>
+        /// Get the decoded bytes of the image if applicable. For JPEG images and some other types the
+        /// <see cref="RawBytes"/> should be used directly.
+        /// </summary>
+        bool TryGetBytes(out IReadOnlyList<byte> bytes);
+
+        /// <summary>
+        /// Try to convert the image to PNG. Doesn't support conversion of JPG to PNG.
+        /// </summary>
+        bool TryGetPng(out byte[] bytes);
     }
 }

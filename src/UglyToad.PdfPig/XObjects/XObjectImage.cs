@@ -6,6 +6,7 @@
     using Core;
     using Graphics.Colors;
     using Graphics.Core;
+    using Images.Png;
     using Tokens;
     using Util.JetBrains.Annotations;
 
@@ -15,7 +16,8 @@
     /// </summary>
     public class XObjectImage : IPdfImage
     {
-        private readonly Lazy<IReadOnlyList<byte>> bytes;
+        [CanBeNull]
+        private readonly Lazy<IReadOnlyList<byte>> bytesFactory;
 
         /// <inheritdoc />
         public PdfRectangle Bounds { get; }
@@ -54,9 +56,7 @@
         /// <inheritdoc />
         public bool IsInlineImage { get; } = false;
 
-        /// <summary>
-        /// The full dictionary for this Image XObject.
-        /// </summary>
+        /// <inheritdoc />
         [NotNull]
         public DictionaryToken ImageDictionary { get; }
 
@@ -64,13 +64,15 @@
         public IReadOnlyList<byte> RawBytes { get; }
 
         /// <inheritdoc />
-        [NotNull]
-        public IReadOnlyList<byte> Bytes => bytes.Value;
-        
+        public ColorSpaceDetails ColorSpaceDetails { get; }
+
         /// <summary>
         /// Creates a new <see cref="XObjectImage"/>.
         /// </summary>
-        internal XObjectImage(PdfRectangle bounds, int widthInSamples, int heightInSamples, int bitsPerComponent,
+        internal XObjectImage(PdfRectangle bounds,
+            int widthInSamples,
+            int heightInSamples,
+            int bitsPerComponent,
             ColorSpace? colorSpace,
             bool isJpxEncoded,
             bool isImageMask,
@@ -78,8 +80,9 @@
             bool interpolate,
             IReadOnlyList<decimal> decode,
             DictionaryToken imageDictionary,
-            IReadOnlyList<byte> rawBytes, 
-            Lazy<IReadOnlyList<byte>> bytes)
+            IReadOnlyList<byte> rawBytes,
+            Lazy<IReadOnlyList<byte>> bytes,
+            ColorSpaceDetails colorSpaceDetails)
         {
             Bounds = bounds;
             WidthInSamples = widthInSamples;
@@ -93,8 +96,26 @@
             Decode = decode;
             ImageDictionary = imageDictionary ?? throw new ArgumentNullException(nameof(imageDictionary));
             RawBytes = rawBytes;
-            this.bytes = bytes ?? throw new ArgumentNullException(nameof(bytes));
+            ColorSpaceDetails = colorSpaceDetails;
+            bytesFactory = bytes;
         }
+
+        /// <inheritdoc />
+        public bool TryGetBytes(out IReadOnlyList<byte> bytes)
+        {
+            bytes = null;
+            if (bytesFactory == null)
+            {
+                return false;
+            }
+
+            bytes = bytesFactory.Value;
+
+            return true;
+        }
+
+        /// <inheritdoc />
+        public bool TryGetPng(out byte[] bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
 
         /// <inheritdoc />
         public override string ToString()

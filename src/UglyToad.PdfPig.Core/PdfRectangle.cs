@@ -1,5 +1,8 @@
 ﻿namespace UglyToad.PdfPig.Core
 {
+    using System;
+    using System.Globalization;
+
     /// <summary>
     /// A rectangle in a PDF file. 
     /// </summary>
@@ -33,91 +36,119 @@
         /// <summary>
         /// Centroid point of the rectangle.
         /// </summary>
-        public PdfPoint Centroid => new PdfPoint(Left + (Right - Left) / 2, Bottom + (Top - Bottom) / 2);
+        public PdfPoint Centroid
+        {
+            get
+            {
+                var cx = (BottomRight.X + TopRight.X + TopLeft.X + BottomLeft.X) / 4.0;
+                var cy = (BottomRight.Y + TopRight.Y + TopLeft.Y + BottomLeft.Y) / 4.0;
+                return new PdfPoint(cx, cy);
+            }
+        }
 
+        private double width;
         /// <summary>
         /// Width of the rectangle.
+        /// <para>A positive number.</para>
         /// </summary>
-        public double Width => Right - Left;
+        public double Width
+        {
+            get
+            {
+                if (double.IsNaN(width))
+                {
+                    GetWidthHeight();
+                }
 
+                return width;
+            }
+        }
+
+        private double height;
         /// <summary>
         /// Height of the rectangle.
+        /// <para>A positive number.</para>
         /// </summary>
-        public double Height => Top - Bottom;
+        public double Height
+        {
+            get
+            {
+                if (double.IsNaN(height))
+                {
+                    GetWidthHeight();
+                }
+
+                return height;
+            }
+        }
+
+        /// <summary>
+        /// Rotation angle of the rectangle. Counterclockwise, in degrees.
+        /// <para>-180 ≤ θ ≤ 180</para>
+        /// </summary>
+        public double Rotation
+        {
+            get
+            {
+                return GetT() * 180 / Math.PI;
+            }
+        }
 
         /// <summary>
         /// Area of the rectangle.
         /// </summary>
-        public double Area => Width * Height;
+        public double Area => Math.Abs(Width * Height);
 
         /// <summary>
-        /// Left.
+        /// Left. This value is only valid if the rectangle is not rotated, check <see cref="Rotation"/>.
         /// </summary>
-        public double Left => TopLeft.X;
+        public double Left => TopLeft.X < TopRight.X ? TopLeft.X : TopRight.X;
 
         /// <summary>
-        /// Top.
+        /// Top. This value is only valid if the rectangle is not rotated, check <see cref="Rotation"/>.
         /// </summary>
-        public double Top => TopLeft.Y;
+        public double Top => TopLeft.Y > BottomLeft.Y ? TopLeft.Y : BottomLeft.Y;
 
         /// <summary>
-        /// Right.
+        /// Right. This value is only valid if the rectangle is not rotated, check <see cref="Rotation"/>.
         /// </summary>
-        public double Right => BottomRight.X;
+        public double Right => BottomRight.X > BottomLeft.X ? BottomRight.X : BottomLeft.X;
 
         /// <summary>
-        /// Bottom.
+        /// Bottom. This value is only valid if the rectangle is not rotated, check <see cref="Rotation"/>.
         /// </summary>
-        public double Bottom => BottomRight.Y;
-
-        /// <summary>
-        /// Create a new <see cref="PdfRectangle"/>.
-        /// </summary>
-        public PdfRectangle(PdfPoint point1, PdfPoint point2) : this(point1.X, point1.Y, point2.X, point2.Y) { }
+        public double Bottom => BottomRight.Y < TopRight.Y ? BottomRight.Y : TopRight.Y;
 
         /// <summary>
         /// Create a new <see cref="PdfRectangle"/>.
         /// </summary>
-        public PdfRectangle(short x1, short y1, short x2, short y2) : this((double)x1, y1, x2, y2) { }
+        /// <param name="bottomLeft">Bottom left point of the rectangle.</param>
+        /// <param name="topRight">Top right point of the rectangle.</param>
+        public PdfRectangle(PdfPoint bottomLeft, PdfPoint topRight) :
+            this(bottomLeft.X, bottomLeft.Y, topRight.X, topRight.Y)
+        { }
 
         /// <summary>
         /// Create a new <see cref="PdfRectangle"/>.
         /// </summary>
-        public PdfRectangle(double x1, double y1, double x2, double y2)
-        {
-            double bottom;
-            double top;
+        /// <param name="x1">Bottom left point's x coordinate of the rectangle.</param>
+        /// <param name="y1">Bottom left point's y coordinate of the rectangle.</param>
+        /// <param name="x2">Top right point's x coordinate of the rectangle.</param>
+        /// <param name="y2">Top right point's y coordinate of the rectangle.</param>
+        public PdfRectangle(short x1, short y1, short x2, short y2) :
+            this((double)x1, y1, x2, y2)
+        { }
 
-            if (y1 <= y2)
-            {
-                bottom = y1;
-                top = y2;
-            }
-            else
-            {
-                bottom = y2;
-                top = y1;
-            }
-
-            double left;
-            double right;
-            if (x1 <= x2)
-            {
-                left = x1;
-                right = x2;
-            }
-            else
-            {
-                left = x2;
-                right = x1;
-            }
-
-            TopLeft = new PdfPoint(left, top);
-            TopRight = new PdfPoint(right, top);
-
-            BottomLeft = new PdfPoint(left, bottom);
-            BottomRight = new PdfPoint(right, bottom);
-        }
+        /// <summary>
+        /// Create a new <see cref="PdfRectangle"/>.
+        /// </summary>
+        /// <param name="x1">Bottom left point's x coordinate of the rectangle.</param>
+        /// <param name="y1">Bottom left point's y coordinate of the rectangle.</param>
+        /// <param name="x2">Top right point's x coordinate of the rectangle.</param>
+        /// <param name="y2">Top right point's y coordinate of the rectangle.</param>
+        public PdfRectangle(double x1, double y1, double x2, double y2) :
+            this(new PdfPoint(x1, y2), new PdfPoint(x2, y2), new PdfPoint(x1, y1), new PdfPoint(x2, y1))
+        { }
 
         /// <summary>
         /// Create a new <see cref="PdfRectangle"/>.
@@ -129,6 +160,9 @@
 
             BottomLeft = bottomLeft;
             BottomRight = bottomRight;
+
+            width = double.NaN;
+            height = double.NaN;
         }
 
         /// <summary>
@@ -139,13 +173,48 @@
         /// <returns>A new rectangle shifted on the y axis by the given delta value.</returns>
         public PdfRectangle Translate(double dx, double dy)
         {
-            return new PdfRectangle(BottomLeft.Translate(dx, dy), TopRight.Translate(dx, dy));
+            return new PdfRectangle(TopLeft.Translate(dx, dy), TopRight.Translate(dx, dy),
+                                    BottomLeft.Translate(dx, dy), BottomRight.Translate(dx, dy));
+        }
+
+        /// <summary>
+        /// -π ≤ θ ≤ π
+        /// </summary>
+        private double GetT()
+        {
+            if (!BottomRight.Equals(BottomLeft))
+            {
+                return Math.Atan2(BottomRight.Y - BottomLeft.Y, BottomRight.X - BottomLeft.X);
+            }
+            else
+            {
+                // handle the case where both bottom points are identical
+                return Math.Atan2(TopLeft.Y - BottomLeft.Y, TopLeft.X - BottomLeft.X) - Math.PI / 2;
+            }
+        }
+
+        private void GetWidthHeight()
+        {
+            var t = GetT();
+            var cos = Math.Cos(t);
+            var sin = Math.Sin(t);
+
+            var inverseRotation = new TransformationMatrix(
+                cos, -sin, 0,
+                sin, cos, 0,
+                0, 0, 1);
+
+            // Using Abs as a proxy for Euclidean distance in 1D 
+            // as it might happen that points have negative coordinates.
+            var bl = inverseRotation.Transform(BottomLeft);
+            width = Math.Abs(inverseRotation.Transform(BottomRight).X - bl.X);
+            height = Math.Abs(inverseRotation.Transform(TopLeft).Y - bl.Y);
         }
 
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"[{TopLeft}, {Width}, {Height}]";
+            return $"[{TopLeft}, {Width.ToString(CultureInfo.InvariantCulture)}, {Height.ToString(CultureInfo.InvariantCulture)}]";
         }
     }
 }

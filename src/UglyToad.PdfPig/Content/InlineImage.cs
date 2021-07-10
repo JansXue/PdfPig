@@ -8,6 +8,8 @@
     using Graphics.Colors;
     using Graphics.Core;
     using Tokens;
+    using Images.Png;
+    using UglyToad.PdfPig.Util.JetBrains.Annotations;
 
     /// <inheritdoc />
     /// <summary>
@@ -42,16 +44,20 @@
         public bool IsInlineImage { get; } = true;
 
         /// <inheritdoc />
+        [NotNull]
+        public DictionaryToken ImageDictionary { get; }
+
+        /// <inheritdoc />
         public RenderingIntent RenderingIntent { get; }
 
         /// <inheritdoc />
         public bool Interpolate { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<byte> Bytes => bytesFactory.Value;
+        public IReadOnlyList<byte> RawBytes { get; }
 
         /// <inheritdoc />
-        public IReadOnlyList<byte> RawBytes { get; }
+        public ColorSpaceDetails ColorSpaceDetails { get; }
 
         /// <summary>
         /// Create a new <see cref="InlineImage"/>.
@@ -63,7 +69,8 @@
             IReadOnlyList<decimal> decode,
             IReadOnlyList<byte> bytes,
             IReadOnlyList<IFilter> filters,
-            DictionaryToken streamDictionary)
+            DictionaryToken streamDictionary,
+            ColorSpaceDetails colorSpaceDetails)
         {
             Bounds = bounds;
             WidthInSamples = widthInSamples;
@@ -74,9 +81,22 @@
             IsImageMask = isImageMask;
             RenderingIntent = renderingIntent;
             Interpolate = interpolate;
+            ImageDictionary = streamDictionary;
 
             RawBytes = bytes;
-            bytesFactory = new Lazy<IReadOnlyList<byte>>(() =>
+            ColorSpaceDetails = colorSpaceDetails;
+
+            var supportsFilters = true;
+            foreach (var filter in filters)
+            {
+                if (!filter.IsSupported)
+                {
+                    supportsFilters = false;
+                    break;
+                }
+            }
+
+            bytesFactory = supportsFilters ? new Lazy<IReadOnlyList<byte>>(() =>
             {
                 var b = bytes.ToArray();
                 for (var i = 0; i < filters.Count; i++)
@@ -86,8 +106,25 @@
                 }
 
                 return b;
-            });
+            }) : null;
         }
+
+        /// <inheritdoc />
+        public bool TryGetBytes(out IReadOnlyList<byte> bytes)
+        {
+            bytes = null;
+            if (bytesFactory == null)
+            {
+                return false;
+            }
+
+            bytes = bytesFactory.Value;
+
+            return true;
+        }
+
+        /// <inheritdoc />
+        public bool TryGetPng(out byte[] bytes) => PngFromPdfImageFactory.TryGenerate(this, out bytes);
 
         /// <inheritdoc />
         public override string ToString()

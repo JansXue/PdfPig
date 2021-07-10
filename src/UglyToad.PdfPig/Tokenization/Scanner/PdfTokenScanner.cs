@@ -8,9 +8,7 @@
     using System.Text.RegularExpressions;
     using Core;
     using Encryption;
-    using Exceptions;
     using Filters;
-    using Parser.Parts;
     using Tokens;
 
     internal class PdfTokenScanner : IPdfTokenScanner
@@ -24,11 +22,15 @@
 
         private readonly IInputBytes inputBytes;
         private readonly IObjectLocationProvider objectLocationProvider;
-        private readonly IFilterProvider filterProvider;
+        private readonly ILookupFilterProvider filterProvider;
         private readonly CoreTokenScanner coreTokenScanner;
 
         private IEncryptionHandler encryptionHandler;
         private bool isDisposed;
+        private bool isBruteForcing;
+
+        private readonly Dictionary<IndirectReference, ObjectToken> overwrittenTokens =
+            new Dictionary<IndirectReference, ObjectToken>();
 
         /// <summary>
         /// Stores tokens encountered between obj - endobj markers for each <see cref="MoveNext"/> call.
@@ -46,7 +48,9 @@
 
         public long CurrentPosition => coreTokenScanner.CurrentPosition;
 
-        public PdfTokenScanner(IInputBytes inputBytes, IObjectLocationProvider objectLocationProvider, IFilterProvider filterProvider,
+        public long Length => coreTokenScanner.Length;
+
+        public PdfTokenScanner(IInputBytes inputBytes, IObjectLocationProvider objectLocationProvider, ILookupFilterProvider filterProvider,
             IEncryptionHandler encryptionHandler)
         {
             this.inputBytes = inputBytes;
@@ -141,6 +145,21 @@
                         coreTokenScanner.Seek(previousTokenPositions[0]);
                         break;
                     }
+
+                    if (readTokens.Count == 3 && readTokens[1] is NumericToken extraObjNum && readTokens[2] is NumericToken extraGenNum)
+                    {
+                        // An obj was encountered after reading the actual token and the object and generation number of the following token.
+                        var actualReference = new IndirectReference(objectNumber.Int, generation.Int);
+                        var actualToken = encryptionHandler.Decrypt(actualReference, readTokens[0]);
+
+                        CurrentToken = new ObjectToken(startPosition, actualReference, actualToken);
+
+                        readTokens.Clear();
+                        coreTokenScanner.Seek(previousTokenPositions[0]);
+
+                        return true;
+                    }
+
                     // This should never happen.
                     Debug.Assert(false, "Encountered a start object 'obj' operator before the end of the previous object.");
                     return false;
@@ -151,7 +170,7 @@
                     var streamIdentifier = new IndirectReference(objectNumber.Long, generation.Int);
 
                     // Prevent an infinite loop where a stream's length references the stream or the stream's offset.
-                    var getLengthFromFile = !(callingObject.HasValue && callingObject.Value.Equals(streamIdentifier));
+                    var getLengthFromFile = !isBruteForcing && !(callingObject.HasValue && callingObject.Value.Equals(streamIdentifier));
 
                     var outerCallingObject = callingObject;
 
@@ -230,37 +249,27 @@
             // Get the expected length from the stream dictionary if present.
             long? length = getLength ? GetStreamLength(streamDictionaryToken) : default(long?);
 
+            if (!getLength && streamDictionaryToken.TryGet(NameToken.Length, out NumericToken inlineLengthToken))
+            {
+                length = inlineLengthToken.Long;
+            }
+
             // Verify again that we start with "stream"
             var hasStartStreamToken = ReadStreamTokenStart(inputBytes, startStreamTokenOffset);
-
             if (!hasStartStreamToken)
             {
                 return false;
             }
 
             // From the specification: The stream operator should be followed by \r\n or \n, not just \r.
-            if (!inputBytes.MoveNext())
+            // While the specification demands a \n we have seen files with `garbage` before the actual data
+            do
             {
-                return false;
-            }
-
-            // While the specification demands a \n we have seen files with \r only in the wild.
-            var hadWhiteSpace = false;
-            if (inputBytes.CurrentByte == '\r')
-            {
-                hadWhiteSpace = true;
-                inputBytes.MoveNext();
-            }
-
-            if (inputBytes.CurrentByte != '\n')
-            {
-                if (!hadWhiteSpace)
+                if (!inputBytes.MoveNext())
                 {
                     return false;
                 }
-
-                inputBytes.Seek(inputBytes.CurrentOffset - 1);
-            }
+            } while ((char)inputBytes.CurrentByte != '\n');
 
             // Store where we started reading the first byte of data.
             long startDataOffset = inputBytes.CurrentOffset;
@@ -649,6 +658,11 @@
                 throw new ObjectDisposedException(nameof(PdfTokenScanner));
             }
 
+            if (overwrittenTokens.TryGetValue(reference, out var value))
+            {
+                return value;
+            }
+
             if (objectLocationProvider.TryGetCached(reference, out var objectToken))
             {
                 return objectToken;
@@ -656,7 +670,7 @@
 
             if (!objectLocationProvider.TryGetOffset(reference, out var offset))
             {
-                throw new InvalidOperationException($"Could not find the object with reference: {reference}.");
+                return null;
             }
 
             // Negative offsets refer to a stream with that number.
@@ -667,11 +681,16 @@
                 return result;
             }
 
+            if (offset == 0 && reference.Generation > ushort.MaxValue)
+            {
+                return new ObjectToken(offset, reference, NullToken.Instance);
+            }
+
             Seek(offset);
 
             if (!MoveNext())
             {
-                throw new PdfDocumentFormatException($"Could not parse the object with reference: {reference}.");
+                return BruteForceFileToFindReference(reference);
             }
 
             var found = (ObjectToken)CurrentToken;
@@ -681,20 +700,41 @@
                 return found;
             }
 
-            // Brute force read the entire file
-            Seek(0);
+            return BruteForceFileToFindReference(reference);
+        }
 
-            while (MoveNext())
+        public void ReplaceToken(IndirectReference reference, IToken token)
+        {
+            // Using 0 position as it isn't written to stream and this value doesn't
+            // seem to be used by any callers. In future may need to revisit this.
+            overwrittenTokens[reference] = new ObjectToken(0, reference, token);
+        }
+
+        private ObjectToken BruteForceFileToFindReference(IndirectReference reference)
+        {
+            try
             {
-                objectLocationProvider.Cache((ObjectToken)CurrentToken, true);
-            }
+                // Brute force read the entire file
+                isBruteForcing = true;
 
-            if (!objectLocationProvider.TryGetCached(reference, out objectToken))
+                Seek(0);
+
+                while (MoveNext())
+                {
+                    objectLocationProvider.Cache((ObjectToken)CurrentToken, true);
+                }
+
+                if (!objectLocationProvider.TryGetCached(reference, out var objectToken))
+                {
+                    throw new PdfDocumentFormatException($"Could not locate object with reference: {reference} despite a full document search.");
+                }
+
+                return objectToken;
+            }
+            finally
             {
-                throw new PdfDocumentFormatException($"Could not locate object with reference: {reference} despite a full document search.");
+                isBruteForcing = false;
             }
-
-            return objectToken;
         }
 
         private ObjectToken GetObjectFromStream(IndirectReference reference, long offset)
@@ -739,7 +779,7 @@
             }
 
             // Read the N integers
-            var bytes = new ByteArrayInputBytes(stream.Decode(filterProvider));
+            var bytes = new ByteArrayInputBytes(stream.Decode(filterProvider, this));
 
             var scanner = new CoreTokenScanner(bytes);
 
@@ -764,6 +804,13 @@
                 scanner.MoveNext();
 
                 var token = scanner.CurrentToken;
+
+                if (token.Equals(OperatorToken.EndObject))
+                {
+                    scanner.MoveNext();
+
+                    token = scanner.CurrentToken;
+                }
 
                 results.Add(new ObjectToken(offset, new IndirectReference(obj.Item1, 0), token));
             }
